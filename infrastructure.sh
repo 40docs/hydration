@@ -710,10 +710,10 @@ copy_docs-builder-workflow_to_docs-builder_repo() {
 
 update_LW_AGENT_TOKEN() {
     if gh secret list --repo ${GITHUB_ORG}/$INFRASTRUCTURE_REPO_NAME | grep -q '^LW_AGENT_TOKEN\s'; then
-        read -rp "Change the Laceworks token ? (N/y): " response
+        read -rp "Change the FortiCNAPP Agent token ? (N/y): " response
         response=${response:-N}
         if [[ "$response" =~ ^[Yy]$ ]]; then
-            read -srp "Enter new value for Laceworks token: " new_LW_AGENT_TOKEN_value
+            read -srp "Enter new value for Laceworks Agent token: " new_LW_AGENT_TOKEN_value
             echo
             if gh secret set LW_AGENT_TOKEN -b "$new_LW_AGENT_TOKEN_value" --repo ${GITHUB_ORG}/$INFRASTRUCTURE_REPO_NAME; then
               echo "Updated Laceworks token"
@@ -1147,16 +1147,16 @@ show_help() {
 # Function for initializing
 initialize() {
   update_GITHUB_AUTH_LOGIN
-  update_GITHUB_FORKS
+  #update_GITHUB_FORKS
   update_AZ_AUTH_LOGIN
   update_OWNER_EMAIL
   update_AZURE_SUBSCRIPTION_SELECTION
   update_AZURE_TFSTATE_RESOURCES
   update_AZURE_CREDENTIALS "$SUBSCRIPTION_ID"
   update_AZURE_SECRETS
-  update_PAT
+  #update_PAT
   update_CONTENT_REPOS_VARIABLES
-  update_DEPLOY-KEYS
+  #update_DEPLOY-KEYS
   update_DOCS_BUILDER_VARIABLES
   #copy_docs-builder-workflow_to_docs-builder_repo
   #copy_dispatch-workflow_to_content_repos
@@ -1166,7 +1166,7 @@ initialize() {
   update_HUB_NVA_CREDENTIALS
   update_HTPASSWD
   update_INFRASTRUCTURE_VARIABLES
-  update_MANIFESTS_PRIVATE_KEYS
+  #update_MANIFESTS_PRIVATE_KEYS
   update_MANIFESTS_APPLICATIONS_VARIABLES
 }
 

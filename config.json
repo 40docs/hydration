@@ -1,9 +1,5 @@
 {
   "REPOS": [
-    "cloud",
-    "ot",
-    "secops",
-    "sase",
     "references"
   ],
   "THEME_REPO_NAME": "theme",
