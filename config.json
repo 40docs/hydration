@@ -1,0 +1,23 @@
+{
+  "REPOS": [
+    "cloud",
+    "ot",
+    "secops",
+    "sase",
+    "references"
+  ],
+  "THEME_REPO_NAME": "theme",
+  "LANDING_PAGE_REPO_NAME": "landing-page",
+  "DOCS_BUILDER_REPO_NAME": "docs-builder",
+  "INFRASTRUCTURE_REPO_NAME": "infrastructure",
+  "MANIFESTS_INFRASTRUCTURE_REPO_NAME": "manifests-infrastructure",
+  "MANIFESTS_APPLICATIONS_REPO_NAME": "manifests-applications",
+  "MKDOCS_REPO_NAME": "mkdocs",
+  "HELM_CHARTS_REPO_NAME": "helm-charts",
+  "DEPLOYED": "true",
+  "PROJECT_NAME": "amerintlxperts",
+  "LOCATION": "eastus",
+  "DNS_ZONE": "amerintlxperts.com"
+}
+
+
