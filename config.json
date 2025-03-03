@@ -15,9 +15,9 @@
   "MKDOCS_REPO_NAME": "mkdocs",
   "HELM_CHARTS_REPO_NAME": "helm-charts",
   "DEPLOYED": "true",
-  "PROJECT_NAME": "amerintlxperts",
+  "PROJECT_NAME": "rmmuap",
   "LOCATION": "eastus",
-  "DNS_ZONE": "amerintlxperts.com"
+  "DNS_ZONE": "rmmuap.amerintlxperts.com"
 }
 
 

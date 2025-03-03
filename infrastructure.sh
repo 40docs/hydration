@@ -125,7 +125,7 @@ update_GITHUB_FORKS() {
   local repo_info
   local parent
   local local_array=( "${ALLREPOS[@]}" )
-  local upstream_org="amerintlxperts"
+  local upstream_org="$GITHUB_ORG"
   local repo_owner="$GITHUB_ORG"
   local max_retries=3  # Maximum number of retries
   local delay_seconds=5  # Delay between retries in seconds
@@ -427,28 +427,6 @@ delete_AZURE_CREDENTIALS() {
     az ad sp delete --id "http://${PROJECT_NAME}"
   else
     echo "Service principal '${PROJECT_NAME}' does not exist."
-  fi
-}
-
-update_MKDOCS_CONTAINER() {
-  local repo="ghcr.io/${GITHUB_ORG}/mkdocs"
-  local tag="latest"
-
-  if docker manifest inspect "$repo:$tag" &>/dev/null; then
-    return 0
-  else
-    attempts=1
-    while [[ $attempts -le $max_attempts ]]; do
-      if gh workflow run -R $GITHUB_ORG/mkdocs "Build and Push Docker Image"; then
-        break
-      else
-        echo "Failed to trigger workflow."
-      fi
-      ((attempts++))
-      sleep 5
-    done
-    echo "Failure building mkdocs container"
-    exit 1
   fi
 }
 
@@ -1176,7 +1154,6 @@ initialize() {
   update_AZURE_TFSTATE_RESOURCES
   update_AZURE_CREDENTIALS "$SUBSCRIPTION_ID"
   update_AZURE_SECRETS
-  update_MKDOCS_CONTAINER
   update_PAT
   update_CONTENT_REPOS_VARIABLES
   update_DEPLOY-KEYS
