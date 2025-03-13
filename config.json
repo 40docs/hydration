@@ -11,7 +11,7 @@
   "MKDOCS_REPO_NAME": "mkdocs",
   "HELM_CHARTS_REPO_NAME": "helm-charts",
   "DEPLOYED": "true",
-  "PROJECT_NAME": "rmmuap",
+  "PROJECT_NAME": "docs",
   "LOCATION": "eastus",
   "DNS_ZONE": "40docs.com"
 }
