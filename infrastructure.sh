@@ -76,7 +76,7 @@ fi
 DOCS_FQDN="docs.${DNS_ZONE}"
 OLLAMA_FQDN="ollama.${DNS_ZONE}"
 
-AZURE_STORAGE_ACCOUNT_NAME=$(echo "{$PROJECT_NAME}account" | tr '[:upper:]' '[:lower:]' | tr -cd 'a-z' | cut -c 1-24)
+AZURE_STORAGE_ACCOUNT_NAME=$(echo "rmmuap{$PROJECT_NAME}account" | tr '[:upper:]' '[:lower:]' | tr -cd 'a-z' | cut -c 1-24)
 if [[ "$MKDOCS_REPO_NAME" != */* ]]; then
   MKDOCS_REPO_NAME="ghcr.io/${GITHUB_ORG}/${MKDOCS_REPO_NAME}"
 fi
