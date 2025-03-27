@@ -75,6 +75,7 @@ else
 fi
 DOCS_FQDN="docs.${DNS_ZONE}"
 OLLAMA_FQDN="ollama.${DNS_ZONE}"
+ARTIFACTS_FQDN="artifacts.${DNS_ZONE}"
 
 AZURE_STORAGE_ACCOUNT_NAME=$(echo "rmmuap{$PROJECT_NAME}account" | tr '[:upper:]' '[:lower:]' | tr -cd 'a-z' | cut -c 1-24)
 if [[ "$MKDOCS_REPO_NAME" != */* ]]; then
@@ -483,6 +484,7 @@ update_PAT() {
 update_MANIFESTS_APPLICATIONS_VARIABLES() {
     for variable in \
       "OLLAMA_FQDN:$OLLAMA_FQDN" \
+      "ARTIFACTS_FQDN:$ARTIFACTS_FQDN" \
       "DOCS_FQDN:$DOCS_FQDN" ; do
       key="${variable%%:*}"
       value="${variable#*:}"
@@ -963,7 +965,7 @@ update_INFRASTRUCTURE_BOOLEAN_VARIABLES() {
   local attempts
   local max_attempts=3
   local retry_interval=5
-  declare -a app_list=("DEPLOYED" "MANAGEMENT_PUBLIC_IP" "APPLICATION_SIGNUP" "APPLICATION_DOCS" "APPLICATION_VIDEO" "APPLICATION_DVWA" "APPLICATION_OLLAMA" "GPU_NODE_POOL")
+  declare -a app_list=("DEPLOYED" "MANAGEMENT_PUBLIC_IP" "APPLICATION_SIGNUP" "APPLICATION_DOCS" "APPLICATION_VIDEO" "APPLICATION_DVWA" "APPLICATION_OLLAMA" "APPLICATION_ARTIFACTS" "GPU_NODE_POOL")
 
   for var_name in "${app_list[@]}"; do
     # Fetch current variable value
