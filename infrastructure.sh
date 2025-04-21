@@ -1156,7 +1156,7 @@ initialize() {
   update_AZURE_TFSTATE_RESOURCES
   update_AZURE_CREDENTIALS "$SUBSCRIPTION_ID"
   update_AZURE_SECRETS
-  #update_PAT
+  update_PAT
   update_CONTENT_REPOS_VARIABLES
   #update_DEPLOY-KEYS
   update_DOCS_BUILDER_VARIABLES
