@@ -1,248 +1,359 @@
-#!/bin/bash
+#!/usr/bin/env bash
+#
+# Infrastructure Hydration Control Script
+#
+# This script orchestrates a multi-repository documentation and infrastructure platform.
+# It manages 8+ interconnected repositories, automating GitHub/Azure authentication,
+# SSH deploy key generation, secrets management, and CI/CD workflow deployment.
+#
+# Usage: ./infrastructure.sh [--initialize|--destroy|--sync-forks|--deploy-keys|--help]
+#
+# Author: 40docs
+# Version: 1.0
 
 set -euo pipefail
+IFS=$'\n\t'
 
-# write a short explanation of this script in a comment block. AI!
+# Global Constants and Configuration
+readonly SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+readonly CONFIG_FILE="${SCRIPT_DIR}/config.json"
+readonly MAX_RETRIES=3
+readonly RETRY_INTERVAL=5
 
-# Initialize INITJSON variable
-INITJSON="config.json"
-export GH_PAGER=""
+# Initialize global variables
 RUN_INFRASTRUCTURE="false"
+CURRENT_DIR=""
+declare -a CONTENTREPOS=()
+declare -a CONTENTREPOSONLY=()
+declare -a DEPLOYKEYSREPOS=()
+declare -a PATREPOS=()
+declare -a ALLREPOS=()
 
-# Ensure the init.json file exists
-if [[ ! -f "$INITJSON" ]]; then
-  echo "Error: $INITJSON file not found. Exiting."
+# Export environment variables
+export GH_PAGER=""
+
+# Ensure the config file exists
+if [[ ! -f "$CONFIG_FILE" ]]; then
+  echo "Error: $CONFIG_FILE file not found. Exiting." >&2
   exit 1
 fi
 
-DEPLOYED=$(jq -r '.DEPLOYED' "$INITJSON")
-PROJECT_NAME=$(jq -r '.PROJECT_NAME' "$INITJSON")
-LOCATION=$(jq -r '.LOCATION' "$INITJSON")
-THEME_REPO_NAME=$(jq -r '.THEME_REPO_NAME' "$INITJSON")
-LANDING_PAGE_REPO_NAME=$(jq -r '.LANDING_PAGE_REPO_NAME' "$INITJSON")
-DOCS_BUILDER_REPO_NAME=$(jq -r '.DOCS_BUILDER_REPO_NAME' "$INITJSON")
-INFRASTRUCTURE_REPO_NAME=$(jq -r '.INFRASTRUCTURE_REPO_NAME' "$INITJSON")
-MANIFESTS_INFRASTRUCTURE_REPO_NAME=$(jq -r '.MANIFESTS_INFRASTRUCTURE_REPO_NAME' "$INITJSON")
-MANIFESTS_APPLICATIONS_REPO_NAME=$(jq -r '.MANIFESTS_APPLICATIONS_REPO_NAME' "$INITJSON")
-MKDOCS_REPO_NAME=$(jq -r '.MKDOCS_REPO_NAME' "$INITJSON")
-HELM_CHARTS_REPO_NAME=$(jq -r '.HELM_CHARTS_REPO_NAME' "$INITJSON")
-DNS_ZONE=$(jq -r '.DNS_ZONE' "$INITJSON")
+# Parse configuration from JSON
+parse_config() {
+    local config_file="$1"
 
-readarray -t CONTENTREPOS < <(jq -r '.REPOS[]' "$INITJSON")
-readarray -t CONTENTREPOSONLY < <(jq -r '.REPOS[]' "$INITJSON")
-CONTENTREPOS+=("$THEME_REPO_NAME")
-CONTENTREPOS+=("$LANDING_PAGE_REPO_NAME")
+    # Core configuration
+    DEPLOYED=$(jq -r '.DEPLOYED' "$config_file")
+    PROJECT_NAME=$(jq -r '.PROJECT_NAME' "$config_file")
+    LOCATION=$(jq -r '.LOCATION' "$config_file")
+    DNS_ZONE=$(jq -r '.DNS_ZONE' "$config_file")
+    CLOUDSHELL=$(jq -r '.CLOUDSHELL // "false"' "$config_file")
 
-DEPLOYKEYSREPOS=()
-DEPLOYKEYSREPOS+=("$MANIFESTS_INFRASTRUCTURE_REPO_NAME")
-DEPLOYKEYSREPOS+=("$MANIFESTS_APPLICATIONS_REPO_NAME")
+    # Repository names
+    THEME_REPO_NAME=$(jq -r '.THEME_REPO_NAME' "$config_file")
+    LANDING_PAGE_REPO_NAME=$(jq -r '.LANDING_PAGE_REPO_NAME' "$config_file")
+    DOCS_BUILDER_REPO_NAME=$(jq -r '.DOCS_BUILDER_REPO_NAME' "$config_file")
+    INFRASTRUCTURE_REPO_NAME=$(jq -r '.INFRASTRUCTURE_REPO_NAME' "$config_file")
+    MANIFESTS_INFRASTRUCTURE_REPO_NAME=$(jq -r '.MANIFESTS_INFRASTRUCTURE_REPO_NAME' "$config_file")
+    MANIFESTS_APPLICATIONS_REPO_NAME=$(jq -r '.MANIFESTS_APPLICATIONS_REPO_NAME' "$config_file")
+    MKDOCS_REPO_NAME=$(jq -r '.MKDOCS_REPO_NAME' "$config_file")
+    HELM_CHARTS_REPO_NAME=$(jq -r '.HELM_CHARTS_REPO_NAME' "$config_file")
 
-readarray -t PATREPOS < <(jq -r '.REPOS[]' "$INITJSON")
-PATREPOS+=("$THEME_REPO_NAME")
-PATREPOS+=("$LANDING_PAGE_REPO_NAME")
-PATREPOS+=("$INFRASTRUCTURE_REPO_NAME")
-PATREPOS+=("$MANIFESTS_INFRASTRUCTURE_REPO_NAME")
-PATREPOS+=("$MANIFESTS_APPLICATIONS_REPO_NAME")
-PATREPOS+=("$DOCS_BUILDER_REPO_NAME")
+    # Build repository arrays
+    while IFS= read -r repo; do
+        CONTENTREPOSONLY+=("$repo")
+    done < <(jq -r '.REPOS[]' "$config_file")
 
-readarray -t ALLREPOS < <(jq -r '.REPOS[]' "$INITJSON")
-ALLREPOS+=("$THEME_REPO_NAME")
-ALLREPOS+=("$LANDING_PAGE_REPO_NAME")
-ALLREPOS+=("$DOCS_BUILDER_REPO_NAME")
-ALLREPOS+=("$INFRASTRUCTURE_REPO_NAME")
-ALLREPOS+=("$MANIFESTS_INFRASTRUCTURE_REPO_NAME")
-ALLREPOS+=("$MANIFESTS_APPLICATIONS_REPO_NAME")
-ALLREPOS+=("$MKDOCS_REPO_NAME")
-ALLREPOS+=("$HELM_CHARTS_REPO_NAME")
+    # Content repositories (includes theme and landing page)
+    CONTENTREPOS=("${CONTENTREPOSONLY[@]}")
+    CONTENTREPOS+=("$THEME_REPO_NAME")
+    CONTENTREPOS+=("$LANDING_PAGE_REPO_NAME")
 
-current_dir=$(pwd)
-max_retries=3
-retry_interval=5
+    # Deploy keys repositories
+    DEPLOYKEYSREPOS=("$MANIFESTS_INFRASTRUCTURE_REPO_NAME" "$MANIFESTS_APPLICATIONS_REPO_NAME")
 
-# Check if variables were properly initialized
-if [[ -z "$DEPLOYED" || -z "$PROJECT_NAME" || -z "$LOCATION" || ${#CONTENTREPOS[@]} -eq 0 ]]; then
-  echo "Error: Failed to initialize variables from $INITJSON. Exiting."
-  exit 1
-fi
+    # PAT repositories
+    PATREPOS=("${CONTENTREPOSONLY[@]}")
+    PATREPOS+=("$THEME_REPO_NAME" "$LANDING_PAGE_REPO_NAME" "$INFRASTRUCTURE_REPO_NAME")
+    PATREPOS+=("$MANIFESTS_INFRASTRUCTURE_REPO_NAME" "$MANIFESTS_APPLICATIONS_REPO_NAME")
+    PATREPOS+=("$DOCS_BUILDER_REPO_NAME")
 
-GITHUB_ORG=$(git config --get remote.origin.url | sed -n 's#.*/\([^/]*\)/.*#\1#p')
-if [ "$GITHUB_ORG" != "$PROJECT_NAME" ]; then
-  PROJECT_NAME="${GITHUB_ORG}-${PROJECT_NAME}"
-  DNS_ZONE="${GITHUB_ORG}.${DNS_ZONE}"
-  LETSENCRYPT_URL='https://acme-staging-v02.api.letsencrypt.org/directory'
-else
-  LETSENCRYPT_URL='https://acme-v02.api.letsencrypt.org/directory'
-fi
-DOCS_FQDN="docs.${DNS_ZONE}"
-OLLAMA_FQDN="ollama.${DNS_ZONE}"
-ARTIFACTS_FQDN="artifacts.${DNS_ZONE}"
-
-AZURE_STORAGE_ACCOUNT_NAME=$(echo "rmmuap{$PROJECT_NAME}account" | tr '[:upper:]' '[:lower:]' | tr -cd 'a-z' | cut -c 1-24)
-if [[ "$MKDOCS_REPO_NAME" != */* ]]; then
-  MKDOCS_REPO_NAME="ghcr.io/${GITHUB_ORG}/${MKDOCS_REPO_NAME}"
-fi
-if [[ "$MKDOCS_REPO_NAME" != *:* ]]; then
-  MKDOCS_REPO_NAME="${MKDOCS_REPO_NAME}:latest"
-fi
-
-if [[ -z "$GITHUB_ORG" ]]; then
-  echo "Could not detect GitHub organization. Exiting."
-  exit 1
-fi
-
-get_github_username() {
-    local output
-    output=$(gh auth status 2>/dev/null)
-    if [[ $? -ne 0 ]]; then
-        echo "Error retrieving GitHub status."
-        return 1
-    fi
-    echo "$output" | grep -oE "account [a-zA-Z0-9_\-]+" | awk '{print $2}'
+    # All repositories
+    ALLREPOS=("${CONTENTREPOSONLY[@]}")
+    ALLREPOS+=("$THEME_REPO_NAME" "$LANDING_PAGE_REPO_NAME" "$DOCS_BUILDER_REPO_NAME")
+    ALLREPOS+=("$INFRASTRUCTURE_REPO_NAME" "$MANIFESTS_INFRASTRUCTURE_REPO_NAME")
+    ALLREPOS+=("$MANIFESTS_APPLICATIONS_REPO_NAME" "$MKDOCS_REPO_NAME" "$HELM_CHARTS_REPO_NAME")
 }
 
-prompt_github_username() {
-    local default_user
-    default_user=$(get_github_username)
-    read -e -p "Enter your personal GitHub account name [${default_user:-no user found}]: " USER
-    USER="${USER:-$default_user}"
-    if [[ -z "$USER" ]]; then
-        echo "No GitHub username provided. Exiting."
+# Initialize configuration
+parse_config "$CONFIG_FILE"
+CURRENT_DIR="$(pwd)"
+
+# Validate configuration
+validate_config() {
+    if [[ -z "$DEPLOYED" || -z "$PROJECT_NAME" || -z "$LOCATION" || ${#CONTENTREPOS[@]} -eq 0 ]]; then
+        echo "Error: Failed to initialize variables from $CONFIG_FILE." >&2
         exit 1
     fi
 }
 
-update_GITHUB_AUTH_LOGIN() {
-  export GITHUB_TOKEN=
-  if ! gh auth status &>/dev/null; then
-    gh auth login || {
-      echo "GitHub login failed. Exiting."
-      exit 1
+# Initialize derived variables
+initialize_environment() {
+    local github_org
+    github_org=$(git config --get remote.origin.url | sed -n 's#.*/\([^/]*\)/.*#\1#p')
+
+    if [[ -z "$github_org" ]]; then
+        echo "Error: Could not detect GitHub organization." >&2
+        exit 1
+    fi
+
+    readonly GITHUB_ORG="$github_org"
+
+    # Adjust naming for forks
+    if [[ "$GITHUB_ORG" != "$PROJECT_NAME" ]]; then
+        PROJECT_NAME="${GITHUB_ORG}-${PROJECT_NAME}"
+        DNS_ZONE="${GITHUB_ORG}.${DNS_ZONE}"
+        readonly LETSENCRYPT_URL='https://acme-staging-v02.api.letsencrypt.org/directory'
+    else
+        readonly LETSENCRYPT_URL='https://acme-v02.api.letsencrypt.org/directory'
+    fi
+
+    # Initialize derived constants
+    readonly DOCS_FQDN="docs.${DNS_ZONE}"
+    readonly OLLAMA_FQDN="ollama.${DNS_ZONE}"
+    readonly ARTIFACTS_FQDN="artifacts.${DNS_ZONE}"
+
+    # Generate Azure storage account name (max 24 chars, alphanumeric only)
+    AZURE_STORAGE_ACCOUNT_NAME=$(echo "rmmuap${PROJECT_NAME}account" | tr '[:upper:]' '[:lower:]' | tr -cd 'a-z' | cut -c 1-24)
+    readonly AZURE_STORAGE_ACCOUNT_NAME
+
+    # Handle MkDocs repo name format
+    if [[ "$MKDOCS_REPO_NAME" != */* ]]; then
+        MKDOCS_REPO_NAME="ghcr.io/${GITHUB_ORG}/${MKDOCS_REPO_NAME}"
+    fi
+    if [[ "$MKDOCS_REPO_NAME" != *:* ]]; then
+        MKDOCS_REPO_NAME="${MKDOCS_REPO_NAME}:latest"
+    fi
+}
+
+# Initialize the environment
+validate_config
+initialize_environment
+
+# Utility Functions
+#
+
+# Retry a command with exponential backoff
+retry_command() {
+    local -r max_attempts="$1"
+    local -r delay="$2"
+    local -r description="$3"
+    shift 3
+
+    local attempt=1
+    while (( attempt <= max_attempts )); do
+        if "$@"; then
+            return 0
+        fi
+
+        if (( attempt < max_attempts )); then
+            echo "Warning: $description failed. Attempt $attempt of $max_attempts. Retrying in ${delay}s..." >&2
+            sleep "$delay"
+        else
+            echo "Error: $description failed after $max_attempts attempts." >&2
+            return 1
+        fi
+
+        ((attempt++))
+    done
+}
+
+# Get GitHub username from authenticated session
+get_github_username() {
+    local output
+
+    if ! output=$(gh auth status 2>/dev/null); then
+        echo "Error: Unable to retrieve GitHub authentication status." >&2
+        return 1
+    fi
+
+    echo "$output" | grep -oE "account [a-zA-Z0-9_\-]+" | awk '{print $2}'
+}
+
+# Prompt for GitHub username with default
+prompt_github_username() {
+    local default_user
+    default_user=$(get_github_username) || default_user=""
+
+    read -r -e -p "Enter your personal GitHub account name [${default_user:-no user found}]: " USER
+    USER="${USER:-$default_user}"
+
+    if [[ -z "$USER" ]]; then
+        echo "Error: No GitHub username provided." >&2
+        exit 1
+    fi
+}
+
+# GitHub Authentication and Management
+#
+
+# Ensure GitHub CLI is authenticated
+update_github_auth_login() {
+    export GITHUB_TOKEN=""
+
+    if ! gh auth status &>/dev/null; then
+        echo "GitHub authentication required..."
+        if ! gh auth login; then
+            echo "Error: GitHub login failed." >&2
+            exit 1
+        fi
+    fi
+
+    gh auth setup-git
+    echo "GitHub authentication verified."
+}
+
+# Manage GitHub repository forks
+update_github_forks() {
+    local -r upstream_org="$GITHUB_ORG"
+    local -r repo_owner="$GITHUB_ORG"
+    local -r max_retries=3
+    local -r delay_seconds=5
+
+    echo "Processing repository forks..."
+
+    for repo_name in "${ALLREPOS[@]}"; do
+        echo "Processing repository: $repo_name"
+
+        if gh repo view "${repo_owner}/${repo_name}" &>/dev/null; then
+            # Repository exists - check if it's a fork
+            local repo_info parent
+            repo_info=$(gh repo view "$repo_owner/$repo_name" --json parent)
+            parent=$(echo "$repo_info" | jq -r '.parent | if type == "object" then (.owner.login + "/" + .name) else "" end')
+
+            if [[ -n "$parent" ]]; then
+                # Repository is a fork, sync it
+                echo "  Syncing fork: $repo_name"
+                if ! gh repo sync "$repo_owner/$repo_name" --branch main --force; then
+                    echo "  Warning: Failed to sync $repo_name" >&2
+                fi
+            else
+                echo "  Repository $repo_name exists but is not a fork. Skipping."
+            fi
+        else
+            # Repository does not exist, fork it
+            echo "  Forking $upstream_org/$repo_name..."
+            if gh repo fork "$upstream_org/$repo_name" --clone=false; then
+                echo "  Successfully forked $upstream_org/$repo_name"
+
+                # Retry sync after forking
+                if ! retry_command "$max_retries" "$delay_seconds" "sync $repo_name after forking" \
+                    gh repo sync "$repo_owner/$repo_name" --branch main --force; then
+                    echo "  Warning: Failed to sync $repo_name after forking" >&2
+                fi
+            else
+                echo "  Error: Failed to fork $upstream_org/$repo_name" >&2
+            fi
+        fi
+    done
+
+    echo "Repository fork processing complete."
+}
+
+
+# Copy dispatch workflow to content repositories
+copy_dispatch_workflow_to_content_repos() {
+    local -r workflow_file="dispatch.yml"
+    local temp_dir
+
+    # Create temporary directory with cleanup trap
+    temp_dir=$(mktemp -d)
+    trap "rm -rf '$temp_dir'" EXIT
+
+    # Validate workflow file exists
+    if [[ ! -f "$workflow_file" ]]; then
+        echo "Error: Workflow file '$workflow_file' not found in current directory." >&2
+        return 1
+    fi
+
+    echo "Copying dispatch workflow to content repositories..."
+
+    for repo in "${CONTENTREPOS[@]}"; do
+        echo "  Processing repository: $repo"
+
+        # Work in temp directory
+        cd "$temp_dir" || {
+            echo "    Error: Failed to change to temp directory" >&2
+            continue
+        }
+
+        # Clone repository
+        if ! git clone "https://github.com/${GITHUB_ORG}/${repo}"; then
+            echo "    Error: Failed to clone repository $repo" >&2
+            continue
+        fi
+
+        cd "$repo" || {
+            echo "    Error: Failed to change to repository directory" >&2
+            continue
+        }
+
+        # Setup workflow directory and copy file
+        mkdir -p .github/workflows
+        cp "${CURRENT_DIR}/${workflow_file}" .github/workflows/dispatch.yml
+
+        # Commit and push if changes exist
+        if [[ -n $(git status --porcelain) ]]; then
+            git add .
+            if git commit -m "Add or update dispatch.yml workflow"; then
+                if ! git push origin main; then
+                    echo "    Warning: Failed to push changes to $repo" >&2
+                fi
+            else
+                echo "    Warning: No changes to commit for $repo" >&2
+            fi
+        else
+            echo "    No changes detected for $repo"
+        fi
+    done
+
+    # Return to original directory
+    cd "$CURRENT_DIR" || {
+        echo "Error: Failed to return to original directory" >&2
+        exit 1
     }
-  fi
-  gh auth setup-git
+
+    echo "Dispatch workflow copy complete."
 }
 
-update_GITHUB_FORKS() {
-  local repo_info
-  local parent
-  local local_array=( "${ALLREPOS[@]}" )
-  local upstream_org="$GITHUB_ORG"
-  local repo_owner="$GITHUB_ORG"
-  local max_retries=3  # Maximum number of retries
-  local delay_seconds=5  # Delay between retries in seconds
+# Azure Authentication and Management
+#
 
-  for repo_name in "${local_array[@]}"; do
-    if gh repo view "${repo_owner}/$repo_name" &> /dev/null; then
-      # Repository exists
-      repo_info=$(gh repo view "$repo_owner/$repo_name" --json parent)
-      parent=$(echo "$repo_info" | jq -r '.parent | if type == "object" then (.owner.login + "/" + .name) else "" end')
+# Ensure Azure CLI is authenticated
+update_azure_auth_login() {
+    echo "Verifying Azure authentication..."
 
-      if [[ -n "$parent" ]]; then
-        # Repository is a fork, sync it
-        echo "$repo_name"
-        if ! gh repo sync "$repo_owner/$repo_name" --branch main --force; then
-          echo "Failed to sync $repo_name. Please check for errors."
+    # Check if account is active and token is valid
+    if ! az account show &>/dev/null || ! az account get-access-token &>/dev/null; then
+        echo "Azure authentication required..."
+        if ! az login --use-device-code; then
+            echo "Error: Azure login failed." >&2
+            exit 1
         fi
-      else
-        echo "Repository $repo_name exists but is not a fork of $upstream_org/$repo_name. Skipping."
-      fi
-    else
-      # Repository does not exist, fork it
-      if gh repo fork "$upstream_org/$repo_name" --clone=false; then
-        echo "Successfully forked $upstream_org/$repo_name."
-
-        # Retry mechanism for syncing after forking
-        local retry_count=0
-        while [[ $retry_count -lt $max_retries ]]; do
-          if gh repo sync "$repo_owner/$repo_name" --branch main --force; then
-            echo "Successfully synced $repo_name after forking."
-            break
-          else
-            ((retry_count++))
-            echo "Sync failed for $repo_name. Retrying in $delay_seconds seconds... (Attempt $retry_count of $max_retries)"
-            sleep $delay_seconds
-          fi
-        done
-
-        # If max retries reached
-        if [[ $retry_count -eq $max_retries ]]; then
-          echo "Failed to sync $repo_name after forking. Please check for errors."
-        fi
-      else
-        echo "Failed to fork $upstream_org/$repo_name. Please check for errors."
-      fi
     fi
-  done
+
+    # Get owner email and validate format
+    OWNER_EMAIL=$(az account show --query user.name -o tsv)
+    if [[ -z "$OWNER_EMAIL" || ! "$OWNER_EMAIL" =~ ^[a-zA-Z0-9._%+-]+@[a-zA-Z0-9.-]+\.[a-zA-Z]{2,}$ ]]; then
+        echo "Error: OWNER_EMAIL is not properly initialized or is not in a valid email format." >&2
+        exit 1
+    fi
+
+    get_signed_in_user_name
+    echo "Azure authentication verified."
 }
 
-
-copy_dispatch-workflow_to_content_repos() {
-  # Use a trap to ensure that temporary directories are cleaned up safely
-  TEMP_DIR=$(mktemp -d)
-  trap 'rm -rf "$TEMP_DIR"' EXIT
-
-  local file="dispatch.yml"
-
-  # Check if dispatch.yml file exists before proceeding
-  if [[ ! -f "$file" ]]; then
-    echo "Error: File $file not found. Please ensure it is present in the current directory."
-    exit 1
-  fi
-
-  for repo in "${CONTENTREPOS[@]}"; do
-    # Return to the original working directory at the start of each loop iteration
-    cd "$TEMP_DIR" || exit 1
-
-    if ! git clone "https://github.com/${GITHUB_ORG}/$repo"; then
-      echo "Error: Failed to clone repository $repo"
-      continue
-    fi
-
-    cd "$repo" || exit 1
-
-    # Ensure .github/workflows directory exists
-    mkdir -p .github/workflows
-
-    # Copy the dispatch.yml file into the .github/workflows directory
-    cp "$current_dir/$file" .github/workflows/dispatch.yml
-
-    # Check if there are untracked or modified files, then commit and push
-    if [[ -n $(git status --porcelain) ]]; then
-      # Stage all changes
-      git add .
-      if git commit -m "Add or update dispatch.yml workflow"; then
-        git push origin main || echo "Warning: Failed to push changes to $repo"
-      else
-        echo "Warning: No changes to commit for $repo"
-      fi
-    else
-      echo "No changes detected for $repo"
-    fi
-  done
-
-  # Return to the original working directory after function is complete
-  cd "$current_dir" || exit 1
-}
-
-update_AZ_AUTH_LOGIN() {
-  # Check if the account is currently active
-  if ! az account show &>/dev/null; then
-    az login --use-device-code
-  else
-    # Check if the token is still valid
-    if ! az account get-access-token &>/dev/null; then
-      az login --use-device-code
-    fi
-  fi
-  OWNER_EMAIL=$(az account show --query user.name -o tsv)
-  if [[ -z "$OWNER_EMAIL" || ! "$OWNER_EMAIL" =~ ^[a-zA-Z0-9._%+-]+@[a-zA-Z0-9.-]+\.[a-zA-Z]{2,}$ ]]; then
-    echo "Error: OWNER_EMAIL is not properly initialized or is not in a valid email format." >&2
-    exit 1
-  fi
-  get_signed_in_user_name
-}
-
-update_OWNER_EMAIL() {
+update_owner_email() {
 
   local max_retries=3
   local retry_interval=5
@@ -252,10 +363,10 @@ update_OWNER_EMAIL() {
       break
     else
       if [[ $attempt -lt $max_retries ]]; then
-        echo "Warning: Failed to set GitHub secret OWNER_EMAIL. Attempt $attempt of $max_retries. Retrying in $retry_interval seconds..."
+        echo "Warning: Failed to set GitHub secret owner_email. Attempt $attempt of $max_retries. Retrying in $retry_interval seconds..."
         sleep $retry_interval
       else
-        echo "Error: Failed to set GitHub secret OWNER_EMAIL:$ after $max_retries attempts. Exiting."
+        echo "Error: Failed to set GitHub secret owner_email:$ after $max_retries attempts. Exiting."
         exit 1
       fi
     fi
@@ -284,15 +395,57 @@ get_signed_in_user_name() {
   export NAME
 }
 
-update_AZURE_SUBSCRIPTION_SELECTION() {
-  local current_sub_name current_sub_id confirm subscription_name
+update_azure_subscription_selection() {
+  local current_sub_name current_sub_id confirm subscription_name login_choice
 
-  current_sub_name=$(az account show --query "name" --output tsv 2>/dev/null)
+  current_sub_name=$(az account show --query "NAME" --output tsv 2>/dev/null)
   current_sub_id=$(az account show --query "id" --output tsv 2>/dev/null)
 
   if [[ -z "$current_sub_name" || -z "$current_sub_id" ]]; then
-    echo "Failed to retrieve current subscription. Ensure you are logged in to Azure."
-    exit 1
+    echo "Failed to retrieve current subscription."
+    echo "This could mean you're not logged in to Azure or no subscription is set as default."
+    echo ""
+    echo "Options:"
+    echo "1) Login to Azure and select subscription"
+    echo "2) Exit script"
+    echo ""
+    read -rp "Choose an option (1-2): " login_choice
+
+    case "$login_choice" in
+      1)
+        echo "Initiating Azure login..."
+        if ! az login --use-device-code; then
+          echo "Error: Azure login failed." >&2
+          exit 1
+        fi
+
+        # Retry getting subscription info after login
+        current_sub_name=$(az account show --query "NAME" --output tsv 2>/dev/null)
+        current_sub_id=$(az account show --query "id" --output tsv 2>/dev/null)
+
+        if [[ -z "$current_sub_name" || -z "$current_sub_id" ]]; then
+          echo "No default subscription found after login. Listing available subscriptions..."
+          az account list --query '[].{Name:name, ID:id}' --output table
+          read -rp "Enter the name of the subscription you want to set as default: " subscription_name
+          SUBSCRIPTION_ID=$(az account list --query "[?name=='$subscription_name'].id" --output tsv 2>/dev/null)
+          if [[ -z "$SUBSCRIPTION_ID" ]]; then
+            echo "Invalid subscription name. Exiting."
+            exit 1
+          fi
+          az account set --subscription "$SUBSCRIPTION_ID"
+          echo "Successfully set subscription: $subscription_name"
+          return
+        fi
+        ;;
+      2)
+        echo "Exiting script as requested."
+        exit 0
+        ;;
+      *)
+        echo "Invalid option. Exiting."
+        exit 1
+        ;;
+    esac
   fi
 
   read -rp "Use the current default subscription: $current_sub_name (ID: $current_sub_id) (Y/n)? " confirm
@@ -312,7 +465,7 @@ update_AZURE_SUBSCRIPTION_SELECTION() {
   fi
 }
 
-update_AZURE_TFSTATE_RESOURCES() {
+update_azure_tfstate_resources() {
   # Ensure OWNER_EMAIL is set
   if [[ -z "$OWNER_EMAIL" || ! "$OWNER_EMAIL" =~ ^[a-zA-Z0-9._%+-]+@[a-zA-Z0-9.-]+\.[a-zA-Z]{2,}$ ]]; then
     echo "Error: OWNER_EMAIL is not properly initialized or is not in a valid email format." >&2
@@ -373,7 +526,7 @@ update_AZURE_TFSTATE_RESOURCES() {
   fi
 }
 
-update_AZURE_CREDENTIALS() {
+update_azure_credentials() {
   local sp_output
   # Create or get existing service principal
   sp_output=$(az ad sp create-for-rbac --name "${PROJECT_NAME}" --role Contributor --scopes "/subscriptions/${1}" --sdk-auth --only-show-errors)
@@ -398,7 +551,7 @@ update_AZURE_CREDENTIALS() {
   fi
 }
 
-delete_AZURE_TFSTATE_RESOURCES() {
+delete_azure_tfstate_resources() {
   # Delete storage container if it exists
   if az storage container show -n "${PROJECT_NAME}tfstate" --account-name "${AZURE_STORAGE_ACCOUNT_NAME}" &>/dev/null; then
     az storage container delete -n "${PROJECT_NAME}tfstate" --account-name "${AZURE_STORAGE_ACCOUNT_NAME}"
@@ -415,7 +568,7 @@ delete_AZURE_TFSTATE_RESOURCES() {
   fi
 }
 
-delete_AZURE_CREDENTIALS() {
+delete_azure_credentials() {
   # Check if service principal exists
   local sp_exists
   sp_exists=$(az ad sp show --id "http://${PROJECT_NAME}" --query "appId" -o tsv 2>/dev/null)
@@ -431,7 +584,7 @@ delete_AZURE_CREDENTIALS() {
   fi
 }
 
-update_PAT() {
+update_pat() {
   local PAT
   local new_PAT_value=""
   local attempts
@@ -481,7 +634,9 @@ update_PAT() {
   fi
 }
 
-update_MANIFESTS_APPLICATIONS_VARIABLES() {
+update_manifests_applications_variables() {
+    local max_retries=3
+    local retry_interval=5
     for variable in \
       "OLLAMA_FQDN:$OLLAMA_FQDN" \
       "ARTIFACTS_FQDN:$ARTIFACTS_FQDN" \
@@ -504,7 +659,9 @@ update_MANIFESTS_APPLICATIONS_VARIABLES() {
     done
 }
 
-update_CONTENT_REPOS_VARIABLES() {
+update_content_repos_variables() {
+  local max_retries=3
+  local retry_interval=5
   for repo in "${CONTENTREPOS[@]}"; do
     for variable in \
       "DOCS_BUILDER_REPO_NAME:$DOCS_BUILDER_REPO_NAME"; do
@@ -527,7 +684,9 @@ update_CONTENT_REPOS_VARIABLES() {
   done
 }
 
-update_DEPLOY-KEYS() {
+update_deploy_keys() {
+  local max_retries=3
+  local retry_interval=5
   local replace_keys
   read -r -p "Do you want to replace the deploy-keys? (N/y): " replace_keys
   replace_keys=${replace_keys:-n}
@@ -579,10 +738,10 @@ update_DEPLOY-KEYS() {
         break
       else
         if [[ $attempt -lt $max_retries ]]; then
-          echo "Warning: Failed to set GitHub secret ${normalized_repo}_SSH_PRIVATE_KEY. Attempt $attempt of $max_retries. Retrying in $retry_interval seconds..."
+          echo "Warning: Failed to set GitHub secret ${normalized_repo}_ssh_private_key. Attempt $attempt of $max_retries. Retrying in $retry_interval seconds..."
           sleep $retry_interval
         else
-          echo "Error: Failed to set GitHub secret ${normalized_repo}_SSH_PRIVATE_KEY after $max_retries attempts. Exiting."
+          echo "Error: Failed to set GitHub secret ${normalized_repo}_ssh_private_key after $max_retries attempts. Exiting."
           exit 1
         fi
       fi
@@ -591,14 +750,13 @@ update_DEPLOY-KEYS() {
   done
 }
 
-update_DOCS_BUILDER_VARIABLES() {
+update_docs_builder_variables() {
   local max_retries=3
   local retry_interval=5
   local attempt=1
 
   # Update variables using a loop
   for variable in \
-    "MKDOCS_REPO_NAME:$MKDOCS_REPO_NAME" \
     "DNS_ZONE:${DNS_ZONE}" \
     "MANIFESTS_APPLICATIONS_REPO_NAME:$MANIFESTS_APPLICATIONS_REPO_NAME" ; do
 
@@ -619,14 +777,29 @@ update_DOCS_BUILDER_VARIABLES() {
       fi
     done
   done
+
+  # Set MKDOCS_REPO_NAME as a secret since it's referenced as secrets.mkdocs_repo_name
+  for ((attempt=1; attempt<=max_retries; attempt++)); do
+    if gh secret set "MKDOCS_REPO_NAME" -b "$MKDOCS_REPO_NAME" --repo "${GITHUB_ORG}/$DOCS_BUILDER_REPO_NAME"; then
+      break
+    else
+      if [[ $attempt -lt $max_retries ]]; then
+        echo "Warning: Failed to set GitHub secret mkdocs_repo_name. Attempt $attempt of $max_retries. Retrying in $retry_interval seconds..."
+        sleep $retry_interval
+      else
+        echo "Error: Failed to set GitHub secret mkdocs_repo_name after $max_retries attempts. Exiting."
+        exit 1
+      fi
+    fi
+  done
 }
 
-copy_docs-builder-workflow_to_docs-builder_repo() {
+copy_docs_builder_workflow_to_docs_builder_repo() {
   local tpl_file="${current_dir}/docs-builder.tpl"
   local github_token="$PAT"
   local output_file=".github/workflows/docs-builder.yml"
   local theme_secret_key_name
-  theme_secret_key_name="$(echo "$THEME_REPO_NAME" | tr '[:lower:]-' '[:upper:]_')_SSH_PRIVATE_KEY"
+  theme_secret_key_name="$(echo "$THEME_REPO_NAME" | tr '[:upper:]-' '[:lower:]_')_ssh_private_key"
 
   # Use a trap to ensure that temporary directories are cleaned up safely
   TEMP_DIR=$(mktemp -d)
@@ -649,7 +822,7 @@ copy_docs-builder-workflow_to_docs-builder_repo() {
   # Start building the clone repo commands string
   local clone_commands=""
   local landing_page_secret_key_name
-  landing_page_secret_key_name="$(echo "${LANDING_PAGE_REPO_NAME}" | tr '[:lower:]-' '[:upper:]_')_SSH_PRIVATE_KEY"
+  landing_page_secret_key_name="$(echo "${LANDING_PAGE_REPO_NAME}" | tr '[:upper:]-' '[:lower:]_')_ssh_private_key"
   clone_commands+="      - name: Clone Landing Page\n"
   clone_commands+="        shell: bash\n"
   clone_commands+="        run: |\n"
@@ -665,14 +838,14 @@ copy_docs-builder-workflow_to_docs-builder_repo() {
   clone_commands+="          echo 'INHERIT: docs/theme/mkdocs.yml' > \$TEMP_DIR/landing-page/mkdocs.yml\n\n"
 
   local theme_secret_key_name
-  theme_secret_key_name="$(echo "${THEME_REPO_NAME}" | tr '[:lower:]-' '[:upper:]_')_SSH_PRIVATE_KEY"
+  theme_secret_key_name="$(echo "${THEME_REPO_NAME}" | tr '[:upper:]-' '[:lower:]_')_ssh_private_key"
   clone_commands+="      - name: Clone Theme\n"
   clone_commands+="        shell: bash\n"
   clone_commands+="        run: |\n"
   clone_commands+="          if [ -f ~/.ssh/id_ed25519 ]; then chmod 600 ~/.ssh/id_ed25519; fi\n"
   clone_commands+="          echo '\${{ secrets.${theme_secret_key_name}}}' > ~/.ssh/id_ed25519 && chmod 400 ~/.ssh/id_ed25519\n"
   clone_commands+="          git clone git@github.com:\${{ github.repository_owner }}/${THEME_REPO_NAME}.git \$TEMP_DIR/landing-page/docs/theme\n"
-  clone_commands+="          docker run --rm -v \$TEMP_DIR/landing-page:/docs \${{ secrets.MKDOCS_REPO_NAME }} build -c -d site/\n"
+  clone_commands+="          docker run --rm -v \$TEMP_DIR/landing-page:/docs \${{ secrets.mkdocs_repo_name }} build -c -d site/\n"
   clone_commands+="          mkdir -p \$TEMP_DIR/build/\n"
   clone_commands+="          cp -a \$TEMP_DIR/landing-page/site \$TEMP_DIR/build/\n\n"
 
@@ -681,7 +854,7 @@ copy_docs-builder-workflow_to_docs-builder_repo() {
   clone_commands+="        run: |\n"
   local secret_key_name
   for repo in "${CONTENTREPOSONLY[@]}"; do
-    secret_key_name="$(echo "$repo" | tr '[:lower:]-' '[:upper:]_')_SSH_PRIVATE_KEY"
+    secret_key_name="$(echo "$repo" | tr '[:upper:]-' '[:lower:]_')_ssh_private_key"
     clone_commands+="          mkdir -p \$TEMP_DIR/src/${repo}\n"
     clone_commands+="          if [ -f ~/.ssh/id_ed25519 ]; then chmod 600 ~/.ssh/id_ed25519; fi\n"
     clone_commands+="          echo '\${{ secrets.${secret_key_name} }}' > ~/.ssh/id_ed25519 && chmod 400 ~/.ssh/id_ed25519\n"
@@ -690,7 +863,7 @@ copy_docs-builder-workflow_to_docs-builder_repo() {
     clone_commands+="          cp -a \$TEMP_DIR/landing-page/docs/theme \$TEMP_DIR/src/${repo}/docs/\n"
     clone_commands+="          echo 'site_name: \"Hands on Labs\"' > \$TEMP_DIR/src/${repo}/mkdocs.yml\n"
     clone_commands+="          echo 'INHERIT: docs/theme/mkdocs.yml' >> \$TEMP_DIR/src/${repo}/mkdocs.yml\n"
-    clone_commands+="          docker run --rm -v \$TEMP_DIR/src/${repo}:/docs \${{ secrets.MKDOCS_REPO_NAME }} build -d site/\n"
+    clone_commands+="          docker run --rm -v \$TEMP_DIR/src/${repo}:/docs \${{ secrets.mkdocs_repo_name }} build -d site/\n"
     clone_commands+="          mv \$TEMP_DIR/src/${repo}/site \$TEMP_DIR/build/site/${repo}\n\n"
   done
 
@@ -710,7 +883,9 @@ copy_docs-builder-workflow_to_docs-builder_repo() {
 
 }
 
-update_LW_AGENT_TOKEN() {
+update_lw_agent_token() {
+    local max_retries=3
+    local retry_interval=5
     if gh secret list --repo ${GITHUB_ORG}/$INFRASTRUCTURE_REPO_NAME | grep -q '^LW_AGENT_TOKEN\s'; then
         read -rp "Change the FortiCNAPP Agent token ? (N/y): " response
         response=${response:-N}
@@ -721,10 +896,10 @@ update_LW_AGENT_TOKEN() {
               echo "Updated Laceworks token"
             else
               if [[ $attempt -lt $max_retries ]]; then
-                echo "Warning: Failed to set GitHub secret LW_AGENT_TOKEN. Attempt $attempt of $max_retries. Retrying in $retry_interval seconds..."
+                echo "Warning: Failed to set GitHub secret lw_agent_token. Attempt $attempt of $max_retries. Retrying in $retry_interval seconds..."
                 sleep $retry_interval
               else
-                echo "Error: Failed to set GitHub secret LW_AGENT_TOKEN after $max_retries attempts. Exiting."
+                echo "Error: Failed to set GitHub secret lw_agent_token after $max_retries attempts. Exiting."
                 exit 1
               fi
             fi
@@ -736,17 +911,19 @@ update_LW_AGENT_TOKEN() {
           echo "Updated Laceworks Token"
         else
           if [[ $attempt -lt $max_retries ]]; then
-            echo "Warning: Failed to set GitHub secret LW_AGENT_TOKEN. Attempt $attempt of $max_retries. Retrying in $retry_interval seconds..."
+            echo "Warning: Failed to set GitHub secret lw_agent_token. Attempt $attempt of $max_retries. Retrying in $retry_interval seconds..."
             sleep $retry_interval
           else
-            echo "Error: Failed to set GitHub secret LW_AGENT_TOKEN after $max_retries attempts. Exiting."
+            echo "Error: Failed to set GitHub secret lw_agent_token after $max_retries attempts. Exiting."
             exit 1
           fi
         fi
     fi
 }
 
-update_HUB_NVA_CREDENTIALS() {
+update_hub_nva_credentials() {
+  local max_retries=3
+  local retry_interval=5
 
   if gh secret list --repo "${GITHUB_ORG}/$INFRASTRUCTURE_REPO_NAME" | grep -q '^HUB_NVA_PASSWORD\s' && gh secret list --repo "${GITHUB_ORG}/$INFRASTRUCTURE_REPO_NAME" | grep -q '^HUB_NVA_USERNAME\s'; then
     read -rp "Change the Hub NVA Password? (N/y): " response
@@ -796,7 +973,9 @@ update_HUB_NVA_CREDENTIALS() {
   done
 }
 
-update_AZURE_SECRETS() {
+update_azure_secrets() {
+  local max_retries=3
+  local retry_interval=5
   for secret in \
     "AZURE_STORAGE_ACCOUNT_NAME:${AZURE_STORAGE_ACCOUNT_NAME}" \
     "TFSTATE_CONTAINER_NAME:${PROJECT_NAME}tfstate" \
@@ -849,7 +1028,90 @@ update_AZURE_SECRETS() {
   done
 }
 
-update_MANAGEMENT_PUBLIC_IP() {
+update_cloudshell_secrets() {
+  local max_retries=3
+  local retry_interval=5
+
+  # Check if cloudshell secrets already exist
+  local tenant_id_exists=false
+  local client_id_exists=false
+
+  if gh secret list --repo "${GITHUB_ORG}/$INFRASTRUCTURE_REPO_NAME" | grep -q '^CLOUDSHELL_DIRECTORY_TENANT_ID\s'; then
+    tenant_id_exists=true
+  fi
+
+  if gh secret list --repo "${GITHUB_ORG}/$INFRASTRUCTURE_REPO_NAME" | grep -q '^CLOUDSHELL_DIRECTORY_CLIENT_ID\s'; then
+    client_id_exists=true
+  fi
+
+  # Handle cloudshell_directory_tenant_id
+  if $tenant_id_exists; then
+    read -rp "Change the CloudShell Directory Tenant ID? (N/y): " response
+    response=${response:-N}
+    if [[ "$response" =~ ^[Yy]$ ]]; then
+      read -rp "Enter CloudShell Directory Tenant ID: " new_tenant_id
+    else
+      echo "Keeping existing CloudShell Directory Tenant ID"
+      new_tenant_id=""
+    fi
+  else
+    read -rp "Enter CloudShell Directory Tenant ID: " new_tenant_id
+  fi
+
+  # Set cloudshell_directory_tenant_id if we have a value
+  if [[ -n "$new_tenant_id" ]]; then
+    for ((attempt=1; attempt<=max_retries; attempt++)); do
+      if gh secret set "CLOUDSHELL_DIRECTORY_TENANT_ID" -b "$new_tenant_id" --repo "${GITHUB_ORG}/$INFRASTRUCTURE_REPO_NAME"; then
+        RUN_INFRASTRUCTURE="true"
+        echo "✓ Set CloudShell Directory Tenant ID"
+        break
+      else
+        if [[ $attempt -lt $max_retries ]]; then
+          echo "Warning: Failed to set GitHub secret CLOUDSHELL_DIRECTORY_TENANT_ID. Attempt $attempt of $max_retries. Retrying in $retry_interval seconds..."
+          sleep $retry_interval
+        else
+          echo "Error: Failed to set GitHub secret CLOUDSHELL_DIRECTORY_TENANT_ID after $max_retries attempts. Exiting."
+          exit 1
+        fi
+      fi
+    done
+  fi
+
+  # Handle cloudshell_directory_client_id
+  if $client_id_exists; then
+    read -rp "Change the CloudShell Directory Client ID? (N/y): " response
+    response=${response:-N}
+    if [[ "$response" =~ ^[Yy]$ ]]; then
+      read -rp "Enter CloudShell Directory Client ID: " new_client_id
+    else
+      echo "Keeping existing CloudShell Directory Client ID"
+      new_client_id=""
+    fi
+  else
+    read -rp "Enter CloudShell Directory Client ID: " new_client_id
+  fi
+
+  # Set cloudshell_directory_client_id if we have a value
+  if [[ -n "$new_client_id" ]]; then
+    for ((attempt=1; attempt<=max_retries; attempt++)); do
+      if gh secret set "CLOUDSHELL_DIRECTORY_CLIENT_ID" -b "$new_client_id" --repo "${GITHUB_ORG}/$INFRASTRUCTURE_REPO_NAME"; then
+        RUN_INFRASTRUCTURE="true"
+        echo "✓ Set CloudShell Directory Client ID"
+        break
+      else
+        if [[ $attempt -lt $max_retries ]]; then
+          echo "Warning: Failed to set GitHub secret CLOUDSHELL_DIRECTORY_CLIENT_ID. Attempt $attempt of $max_retries. Retrying in $retry_interval seconds..."
+          sleep $retry_interval
+        else
+          echo "Error: Failed to set GitHub secret CLOUDSHELL_DIRECTORY_CLIENT_ID after $max_retries attempts. Exiting."
+          exit 1
+        fi
+      fi
+    done
+  fi
+}
+
+update_management_public_ip() {
   local current_value
   local new_value=""
   local attempts
@@ -896,7 +1158,7 @@ update_MANAGEMENT_PUBLIC_IP() {
   done
 }
 
-update_PRODUCTION_ENVIRONMENT_VARIABLES() {
+update_production_environment_variables() {
   local current_value
   local new_value=""
   local attempts
@@ -959,13 +1221,13 @@ update_PRODUCTION_ENVIRONMENT_VARIABLES() {
 
 }
 
-update_INFRASTRUCTURE_BOOLEAN_VARIABLES() {
+update_infrastructure_boolean_variables() {
   local current_value
   local new_value=""
   local attempts
   local max_attempts=3
   local retry_interval=5
-  declare -a app_list=("DEPLOYED" "MANAGEMENT_PUBLIC_IP" "APPLICATION_SIGNUP" "APPLICATION_DOCS" "APPLICATION_VIDEO" "APPLICATION_DVWA" "APPLICATION_OLLAMA" "APPLICATION_ARTIFACTS" "APPLICATION_EXTRACTOR" "GPU_NODE_POOL")
+  declare -a app_list=("DEPLOYED" "MANAGEMENT_PUBLIC_IP" "APPLICATION_SIGNUP" "APPLICATION_DOCS" "APPLICATION_VIDEO" "APPLICATION_DVWA" "APPLICATION_OLLAMA" "APPLICATION_ARTIFACTS" "APPLICATION_EXTRACTOR" "GPU_NODE_POOL" "PRODUCTION_ENVIRONMENT")
 
   for var_name in "${app_list[@]}"; do
     # Fetch current variable value
@@ -1013,7 +1275,9 @@ update_INFRASTRUCTURE_BOOLEAN_VARIABLES() {
   done
 }
 
-update_INFRASTRUCTURE_VARIABLES() {
+update_infrastructure_variables() {
+  local max_retries=3
+  local retry_interval=5
   for variable in \
     "PROJECT_NAME:${PROJECT_NAME}" \
     "DNS_ZONE:${DNS_ZONE}" \
@@ -1023,7 +1287,8 @@ update_INFRASTRUCTURE_VARIABLES() {
     "LETSENCRYPT_URL:${LETSENCRYPT_URL}" \
     "DOCS_BUILDER_REPO_NAME:${DOCS_BUILDER_REPO_NAME}" \
     "MANIFESTS_APPLICATIONS_REPO_NAME:${MANIFESTS_APPLICATIONS_REPO_NAME}" \
-    "MANIFESTS_INFRASTRUCTURE_REPO_NAME:${MANIFESTS_INFRASTRUCTURE_REPO_NAME}"; do
+    "MANIFESTS_INFRASTRUCTURE_REPO_NAME:${MANIFESTS_INFRASTRUCTURE_REPO_NAME}" \
+    "CLOUDSHELL:${CLOUDSHELL:-false}"; do
     key="${variable%%:*}"
     value="${variable#*:}"
     for ((attempt=1; attempt<=max_retries; attempt++)); do
@@ -1042,7 +1307,9 @@ update_INFRASTRUCTURE_VARIABLES() {
   done
 }
 
-update_MANIFESTS_PRIVATE_KEYS() {
+update_manifests_private_keys() {
+  local max_retries=3
+  local retry_interval=5
   secret_key=$(cat $HOME/.ssh/id_ed25519-${MANIFESTS_INFRASTRUCTURE_REPO_NAME})
   normalized_repo=$(echo "${MANIFESTS_INFRASTRUCTURE_REPO_NAME}" | tr '-' '_' | tr '[:lower:]' '[:upper:]')
   for ((attempt=1; attempt<=max_retries; attempt++)); do
@@ -1051,10 +1318,10 @@ update_MANIFESTS_PRIVATE_KEYS() {
       break
     else
       if [[ $attempt -lt $max_retries ]]; then
-        echo "Warning: Failed to set GitHub secret ${normalized_repo}_SSH_PRIVATE_KEY. Attempt $attempt of $max_retries. Retrying in $retry_interval seconds..."
+        echo "Warning: Failed to set GitHub secret ${normalized_repo}_ssh_private_key. Attempt $attempt of $max_retries. Retrying in $retry_interval seconds..."
         sleep $retry_interval
       else
-        echo "Error: Failed to set GitHub secret ${normalized_repo}_SSH_PRIVATE_KEY after $max_retries attempts. Exiting."
+        echo "Error: Failed to set GitHub secret ${normalized_repo}_ssh_private_key after $max_retries attempts. Exiting."
         exit 1
       fi
     fi
@@ -1068,19 +1335,19 @@ update_MANIFESTS_PRIVATE_KEYS() {
       break
     else
       if [[ $attempt -lt $max_retries ]]; then
-        echo "Warning: Failed to set GitHub secret ${normalized_repo}_SSH_PRIVATE_KEY. Attempt $attempt of $max_retries. Retrying in $retry_interval seconds..."
+        echo "Warning: Failed to set GitHub secret ${normalized_repo}_ssh_private_key. Attempt $attempt of $max_retries. Retrying in $retry_interval seconds..."
         sleep $retry_interval
       else
-        echo "Error: Failed to set GitHub secret ${normalized_repo}_SSH_PRIVATE_KEY after $max_retries attempts. Exiting."
+        echo "Error: Failed to set GitHub secret ${normalized_repo}_ssh_private_key after $max_retries attempts. Exiting."
         exit 1
       fi
     fi
   done
 }
 
-update_HTPASSWD() {
+update_htpasswd() {
 
-  # Check if the secret HTPASSWD exists
+  # Check if the secret htpasswd exists
   if gh secret list --repo "${GITHUB_ORG}/${INFRASTRUCTURE_REPO_NAME}" | grep -q '^HTPASSWD\s'; then
     read -rp "Change the Docs HTPASSWD? (N/y): " response
     response=${response:-N}
@@ -1097,33 +1364,33 @@ update_HTPASSWD() {
 
   local max_retries=3
   local retry_interval=5
-  # Attempt to set the HTPASSWD secret with retries
+  # Attempt to set the htpasswd secret with retries
   for ((attempt=1; attempt<=max_retries; attempt++)); do
     if gh secret set HTPASSWD -b "$new_htpasswd_value" --repo "${GITHUB_ORG}/${INFRASTRUCTURE_REPO_NAME}"; then
       RUN_INFRASTRUCTURE="true"
       break
     else
       if [[ $attempt -lt $max_retries ]]; then
-        echo "Warning: Failed to set GitHub secret HTPASSWD. Attempt $attempt of $max_retries. Retrying in $retry_interval seconds..."
+        echo "Warning: Failed to set GitHub secret htpasswd. Attempt $attempt of $max_retries. Retrying in $retry_interval seconds..."
         sleep $retry_interval
       else
-        echo "Error: Failed to set GitHub secret HTPASSWD after $max_retries attempts. Exiting."
+        echo "Error: Failed to set GitHub secret htpasswd after $max_retries attempts. Exiting."
         exit 1
       fi
     fi
   done
 
-  # Attempt to set the HTUSERNAME secret with retries
+  # Attempt to set the htusername secret with retries
   for ((attempt=1; attempt<=max_retries; attempt++)); do
     if gh secret set HTUSERNAME -b "$GITHUB_ORG" --repo "${GITHUB_ORG}/${INFRASTRUCTURE_REPO_NAME}"; then
       RUN_INFRASTRUCTURE="true"
       break
     else
       if [[ $attempt -lt $max_retries ]]; then
-        echo "Warning: Failed to set GitHub secret HTUSERNAME. Attempt $attempt of $max_retries. Retrying in $retry_interval seconds..."
+        echo "Warning: Failed to set GitHub secret htusername. Attempt $attempt of $max_retries. Retrying in $retry_interval seconds..."
         sleep $retry_interval
       else
-        echo "Error: Failed to set GitHub secret HTUSERNAME after $max_retries attempts. Exiting."
+        echo "Error: Failed to set GitHub secret htusername after $max_retries attempts. Exiting."
         exit 1
       fi
     fi
@@ -1131,156 +1398,243 @@ update_HTPASSWD() {
 
 }
 
+# Display usage information
 show_help() {
-    echo "Usage: $0 [--initialize | --destroy | --create-azure-resources | --help]"
-    echo
-    echo "Options:"
-    echo "  --initialize              Default option. Initializes GitHub secrets and variables"
-    echo "  --destroy                 Destroys the environment."
-    echo "  --create-azure-resources  Creates resources."
-    echo "  --sync-forks              Synchronize GitHub forks."
-    echo "  --deploy-keys             Update DEPLOY-KEYS."
-    echo "  --htpasswd                Change the docs password."
-    echo "  --management-ip           Management IP Address"
-    echo "  --hub-passwd              Change Fortiweb password."
-    echo "  --help                    Displays this help message."
+    cat << EOF
+Usage: $0 [OPTION]
+
+Infrastructure Hydration Control Script
+Orchestrates multi-repository documentation and infrastructure platform.
+
+OPTIONS:
+  --initialize              Initialize GitHub secrets, variables, and authentication (default)
+  --destroy                 Destroy the environment and clean up resources
+  --create-azure-resources  Create Azure resources only
+  --sync-forks              Synchronize GitHub repository forks
+  --deploy-keys             Update SSH deploy keys across repositories
+  --htpasswd                Change the documentation password
+  --management-ip           Update management IP address
+  --hub-passwd              Change Fortiweb password
+  --cloudshell-secrets      Update CloudShell directory secrets
+  --help                    Display this help message
+
+EXAMPLES:
+  $0                        # Run initialization (default)
+  $0 --sync-forks          # Sync all repository forks
+  $0 --deploy-keys         # Regenerate SSH deploy keys
+
+For more information, see the repository documentation.
+EOF
 }
 
-# Function for initializing
+# Main execution functions
+#
+
+# Full initialization workflow
 initialize() {
-  update_GITHUB_AUTH_LOGIN
-  #update_GITHUB_FORKS
-  update_AZ_AUTH_LOGIN
-  update_OWNER_EMAIL
-  update_AZURE_SUBSCRIPTION_SELECTION
-  update_AZURE_TFSTATE_RESOURCES
-  update_AZURE_CREDENTIALS "$SUBSCRIPTION_ID"
-  update_AZURE_SECRETS
-  update_PAT
-  update_CONTENT_REPOS_VARIABLES
-  #update_DEPLOY-KEYS
-  update_DOCS_BUILDER_VARIABLES
-  #copy_docs-builder-workflow_to_docs-builder_repo
-  #copy_dispatch-workflow_to_content_repos
-  update_INFRASTRUCTURE_BOOLEAN_VARIABLES
-  update_PRODUCTION_ENVIRONMENT_VARIABLES
-  update_LW_AGENT_TOKEN
-  update_HUB_NVA_CREDENTIALS
-  update_HTPASSWD
-  update_INFRASTRUCTURE_VARIABLES
-  #update_MANIFESTS_PRIVATE_KEYS
-  update_MANIFESTS_APPLICATIONS_VARIABLES
+    echo "Starting infrastructure initialization..."
+
+    update_github_auth_login
+    # update_github_forks  # Uncommented when needed
+    update_azure_auth_login
+    update_owner_email
+    update_azure_subscription_selection
+    update_azure_tfstate_resources
+    update_azure_credentials "$SUBSCRIPTION_ID"
+    update_azure_secrets
+    update_cloudshell_secrets
+    update_pat
+    update_content_repos_variables
+    # update_deploy_keys  # Uncommented when needed
+    update_docs_builder_variables
+    # copy_docs_builder_workflow_to_docs_builder_repo  # Uncommented when needed
+    # copy_dispatch_workflow_to_content_repos  # Uncommented when needed
+    update_infrastructure_boolean_variables
+    update_production_environment_variables
+    update_lw_agent_token
+    update_hub_nva_credentials
+    update_htpasswd
+    update_infrastructure_variables
+    # update_manifests_private_keys  # Uncommented when needed
+    update_manifests_applications_variables
+
+    echo "Infrastructure initialization complete."
 }
 
-hub_password(){
-  update_GITHUB_AUTH_LOGIN
-  update_HUB_NVA_CREDENTIALS
-}
-
+# Environment destruction
 destroy() {
-    echo "Destroying environment..."
-    # Add your destruction code here
+    echo "Starting environment destruction..."
+    # Add destruction logic here
+    echo "Environment destruction complete."
 }
 
-create-azure-resources() {
-    update_GITHUB_AUTH_LOGIN
-    update_AZ_AUTH_LOGIN
+# Azure resource creation only
+create_azure_resources() {
+    echo "Creating Azure resources..."
+
+    update_github_auth_login
+    update_azure_auth_login
     update_OWNER_EMAIL
     update_AZURE_SUBSCRIPTION_SELECTION
     update_AZURE_TFSTATE_RESOURCES
     update_AZURE_CREDENTIALS "$SUBSCRIPTION_ID"
     update_AZURE_SECRETS
+    update_cloudshell_secrets
+
+    echo "Azure resource creation complete."
 }
 
-sync-forks() {
-  update_GITHUB_AUTH_LOGIN
-  update_GITHUB_FORKS
+# Sync GitHub forks
+sync_forks() {
+    echo "Synchronizing GitHub forks..."
+
+    update_github_auth_login
+    update_github_forks
+
+    echo "Fork synchronization complete."
 }
 
-deploy-keys() {
-  update_GITHUB_AUTH_LOGIN
-  update_DEPLOY-KEYS
+# Update deploy keys
+deploy_keys() {
+    echo "Updating deploy keys..."
+
+    update_github_auth_login
+    update_DEPLOY-KEYS
+
+    echo "Deploy keys update complete."
 }
 
+# Update htpasswd
 htpasswd() {
-  update_GITHUB_AUTH_LOGIN
-  update_HTPASSWD
+    echo "Updating htpasswd..."
+
+    update_github_auth_login
+    update_HTPASSWD
+
+    echo "Htpasswd update complete."
 }
 
-management-ip() {
-  update_GITHUB_AUTH_LOGIN
-  update_MANAGEMENT_PUBLIC_IP
+# Update management IP
+management_ip() {
+    echo "Updating management IP..."
+
+    update_github_auth_login
+    update_MANAGEMENT_PUBLIC_IP
+
+    echo "Management IP update complete."
 }
 
-# Check the number of arguments
-if [ $# -gt 1 ]; then
-    echo "Error: Only one parameter can be supplied."
-    show_help
-    exit 1
-fi
+# Update hub password
+hub_password() {
+    echo "Updating hub password..."
 
-# Set default action if no arguments are provided
-action="--initialize"
-if [ $# -eq 1 ]; then
-    action="$1"
-fi
+    update_github_auth_login
+    update_HUB_NVA_CREDENTIALS
 
-# Handle each parameter
-case "$action" in
-    --initialize)
-        initialize
-        ;;
-    --destroy)
-        destroy
-        ;;
-    --create-azure-resources)
-        create-azure-resources
-        ;;
-    --sync-forks)
-        sync-forks
-        ;;
-    --env-vars)
-        env-vars
-        ;;
-    --deploy-keys)
-        deploy-keys
-        ;;
-    --htpasswd)
-        htpasswd
-        ;;
-    --management-ip)
-        management-ip
-        ;;
-    --hub-passwd)
-        hub_password
-        ;;
-    --help)
-        show_help
-        ;;
-    *)
-        echo "Error: Unknown option '$action'"
+    echo "Hub password update complete."
+}
+
+# CloudShell secrets update
+cloudshell_secrets() {
+    echo "Updating CloudShell secrets..."
+
+    update_github_auth_login
+    update_cloudshell_secrets
+
+    echo "CloudShell secrets update complete."
+}
+
+# Environment variables update
+env_vars() {
+    echo "Updating environment variables..."
+
+    update_github_auth_login
+    update_infrastructure_boolean_variables
+
+    echo "Environment variables update complete."
+}
+
+# Main Script Execution
+#
+
+# Parse command line arguments
+main() {
+    local action="--initialize"  # Default action
+
+    # Validate argument count
+    if (( $# > 1 )); then
+        echo "Error: Only one parameter can be supplied." >&2
         show_help
         exit 1
-        ;;
-esac
+    fi
 
-if [ "$RUN_INFRASTRUCTURE" = "true" ]; then
-  read -p "Do you wish to run the infrastructure workflow? [Y/n] " user_response
-  user_response=${user_response:-Y}
+    # Set action if argument provided
+    if (( $# == 1 )); then
+        action="$1"
+    fi
 
-  if [[ "$user_response" =~ ^[Yy]$ ]]; then
-    for ((attempt=1; attempt<=max_retries; attempt++)); do
-      if gh workflow run -R "$GITHUB_ORG/$INFRASTRUCTURE_REPO_NAME" "infrastructure"; then
-        break
-      else
-        if [[ $attempt -lt $max_retries ]]; then
-          echo "Warning: Failed to trigger workflow 'infrastructure'. Attempt $attempt of $max_retries. Retrying in $retry_interval seconds..."
-          sleep $retry_interval
-        else
-          echo "Error: Failed to trigger workflow 'infrastructure' after $max_retries attempts. Exiting."
-          exit 1
+    # Execute based on action
+    case "$action" in
+        --initialize)
+            initialize
+            ;;
+        --destroy)
+            destroy
+            ;;
+        --create-azure-resources)
+            create_azure_resources
+            ;;
+        --sync-forks)
+            sync_forks
+            ;;
+        --env-vars)
+            env_vars
+            ;;
+        --deploy-keys)
+            deploy_keys
+            ;;
+        --htpasswd)
+            htpasswd
+            ;;
+        --management-ip)
+            management_ip
+            ;;
+        --hub-passwd)
+            hub_password
+            ;;
+        --cloudshell-secrets)
+            cloudshell_secrets
+            ;;
+        --help|-h)
+            show_help
+            exit 0
+            ;;
+        *)
+            echo "Error: Unknown option '$action'" >&2
+            show_help
+            exit 1
+            ;;
+    esac
+
+    # Handle infrastructure workflow trigger
+    if [[ "$RUN_INFRASTRUCTURE" == "true" ]]; then
+        local user_response
+        read -r -p "Do you wish to run the infrastructure workflow? [Y/n] " user_response
+        user_response="${user_response:-Y}"
+
+        if [[ "$user_response" =~ ^[Yy]$ ]]; then
+            echo "Triggering infrastructure workflow..."
+
+            if ! retry_command "$MAX_RETRIES" "$RETRY_INTERVAL" "trigger infrastructure workflow" \
+                gh workflow run -R "$GITHUB_ORG/$INFRASTRUCTURE_REPO_NAME" "infrastructure"; then
+                echo "Error: Failed to trigger infrastructure workflow." >&2
+                exit 1
+            fi
+
+            echo "Infrastructure workflow triggered successfully."
         fi
-      fi
-    done
-  fi
-fi
+    fi
+}
+
+# Execute main function with all arguments
+main "$@"

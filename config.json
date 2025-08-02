@@ -13,5 +13,6 @@
   "DEPLOYED": "true",
   "PROJECT_NAME": "40docs",
   "LOCATION": "eastus",
-  "DNS_ZONE": "40docs.com"
+  "DNS_ZONE": "40docs.com",
+  "CLOUDSHELL": "false"
 }
