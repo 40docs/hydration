@@ -304,9 +304,9 @@ gh pr create --title "Your changes" --body "Description"
 ./infrastructure.sh --cloudshell-secrets
 ```
 
-## 🐛 Troubleshooting
+## � Troubleshooting
 
-### Common Issues & Solutions
+### Common Error Patterns and Solutions
 
 #### Authentication Errors
 ```bash
@@ -317,6 +317,8 @@ ERROR: Azure authentication failed
 # Solutions
 gh auth login                    # Re-authenticate GitHub CLI
 az login --use-device-code      # Re-authenticate Azure CLI
+gh auth status                  # Verify GitHub API access
+az account show                 # Verify Azure API access
 ```
 
 #### Configuration Errors
@@ -324,11 +326,14 @@ az login --use-device-code      # Re-authenticate Azure CLI
 # Exit Code 2 (CONFIG_ERROR)
 ERROR: Configuration validation failed
 ERROR: DNS_ZONE must be a valid domain name
+ERROR: Invalid GitHub organization name
+ERROR: Invalid Azure storage account name
 
 # Solutions
-# Check config.json format and required fields
 jq '.' config.json              # Validate JSON syntax
-# Ensure all required fields are properly set
+# Check GitHub organization exists
+gh org view YOUR_ORG            # Check organization access
+# Verify all required fields are properly set in config.json
 ```
 
 #### Network/API Errors
@@ -336,33 +341,15 @@ jq '.' config.json              # Validate JSON syntax
 # Exit Code 4 (NETWORK_ERROR)
 ERROR: Failed to set GitHub secret after 3 attempts
 ERROR: Failed to create Azure resource group
+ERROR: Failed to connect to GitHub API
+ERROR: Azure CLI operation timed out
 
 # Solutions
-# Check network connectivity and service status
-gh auth status                  # Verify GitHub API access
-az account show                 # Verify Azure API access
+# Check internet connectivity
+curl -I https://api.github.com   # Test GitHub API
+curl -I https://management.azure.com  # Test Azure API
+# Check firewall/proxy settings and retry operations
 ```
-
-#### SSH Key Issues
-```bash
-# Regenerate all SSH deploy keys
-./infrastructure.sh --deploy-keys
-
-# Manual key inspection
-ls -la ~/.ssh/id_ed25519-*
-```
-
-#### Repository Access Problems
-```bash
-# Verify repository existence and permissions
-gh repo view YOUR_ORG/REPO_NAME
-# Sync forks if using forked repositories
-./infrastructure.sh --sync-forks
-```
-
-## 🔍 Troubleshooting
-
-### Common Error Patterns and Solutions
 
 #### Bash Compatibility Issues
 ```bash
@@ -379,6 +366,27 @@ tr '[:upper:]' '[:lower:]'  # Instead of ${var,,}
 # Error: command not found (for validation functions)
 # Solution: All functions now properly defined before execution
 # Ensure you're running the updated script version
+```
+
+#### SSH Key Issues
+```bash
+# Deploy key already exists or invalid permissions
+ERROR: Key already exists on repository
+ERROR: Permission denied (publickey)
+
+# Solutions
+./infrastructure.sh --deploy-keys  # Regenerate all deploy keys
+
+# Manual key inspection
+ls -la ~/.ssh/id_ed25519-*
+```
+
+#### Repository Access Problems
+```bash
+# Verify repository existence and permissions
+gh repo view YOUR_ORG/REPO_NAME
+# Sync forks if using forked repositories
+./infrastructure.sh --sync-forks
 ```
 
 #### Enhanced Logging System
