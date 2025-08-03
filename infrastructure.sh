@@ -918,7 +918,7 @@ manage_conditional_variable() {
     local prompt_create="${4:-Enter value for $variable_name}"
     local default_value="${5:-}"
 
-    local variable_value="" 
+    local variable_value=""
     local current_value=""
 
     # Get current value
