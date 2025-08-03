@@ -853,7 +853,8 @@ manage_boolean_variable() {
     local default_value="${3:-false}"
     local prompt_text="${4:-$variable_name}"
 
-    local current_value new_value
+    local current_value
+    local new_value=""
 
     # Get current value
     current_value=$(get_github_variable "$variable_name" "$repo_name")
@@ -1803,7 +1804,7 @@ update_management_public_ip() {
 }
 
 update_production_environment_variables() {
-    local current_value new_value
+    local current_value new_value=""
 
     # Get current value from infrastructure repo
     current_value=$(get_github_variable "PRODUCTION_ENVIRONMENT" "$INFRASTRUCTURE_REPO_NAME")
