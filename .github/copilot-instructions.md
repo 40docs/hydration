@@ -177,6 +177,35 @@ Infrastructure boolean vars (DEPLOYED, APPLICATION_*) are managed through intera
 - **Bash compatibility errors**: Script now compatible with macOS bash 3.2.57+ and modern versions
 - **Function not found errors**: Fixed by proper function definition ordering
 
+### Shell Compatibility Guidelines
+When generating or executing complex CLI commands, especially those involving:
+- Advanced bash features (arrays, parameter expansion, process substitution)
+- Multiple chained commands with pipes or redirections
+- Complex variable manipulations or string operations
+- Script execution or sourcing operations
+
+**Always prefer explicit bash execution** when the user's default shell is zsh:
+
+```bash
+# Instead of running directly in zsh (which may fail):
+./infrastructure.sh --initialize
+
+# Use explicit bash execution:
+bash ./infrastructure.sh --initialize
+
+# For complex command sequences:
+bash -c 'command1 && command2 | command3'
+
+# For scripts with bash-specific syntax:
+bash -euo pipefail script.sh
+```
+
+**Rationale**:
+- macOS defaults to zsh, but the infrastructure script requires bash-specific features
+- zsh has different array handling, parameter expansion, and built-in behaviors
+- Explicit bash execution ensures consistent behavior across different user environments
+- Prevents subtle compatibility issues that may not be immediately apparent
+
 ### Troubleshooting Script Execution
 **Common Error Patterns:**
 - `${var,,}: bad substitution` - Fixed with portable `tr` commands for case conversion
