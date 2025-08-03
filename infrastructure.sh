@@ -180,7 +180,7 @@ validate_config() {
 # Returns:
 #   0 on success, exits on failure
 initialize_environment() {
-    local github_org
+    local github_org=""
     github_org=$(git config --get remote.origin.url | sed -n 's#.*/\([^/]*\)/.*#\1#p')
 
     if [[ -z "$github_org" ]]; then
@@ -310,7 +310,7 @@ validate_boolean() {
 # Secure temporary file creation
 create_secure_temp_file() {
     local prefix="${1:-infratemp}"
-    local temp_file
+    local temp_file=""
 
     temp_file=$(mktemp "/tmp/${prefix}.XXXXXX") || {
         log_error "Failed to create secure temporary file"
@@ -328,7 +328,7 @@ create_secure_temp_file() {
 
 create_secure_temp_dir() {
     local prefix="${1:-infratemp}"
-    local temp_dir
+    local temp_dir=""
 
     temp_dir=$(mktemp -d "/tmp/${prefix}.XXXXXX") || {
         log_error "Failed to create secure temporary directory"
@@ -508,7 +508,7 @@ prompt_choice() {
     local prompt="$1"
     shift
     local options=("$@")
-    local choice
+    local choice=""
 
     echo "$prompt"
     for i in "${!options[@]}"; do
@@ -552,7 +552,7 @@ retry_command() {
 
 # Get GitHub username from authenticated session
 get_github_username() {
-    local output
+    local output=""
 
     if ! output=$(gh auth status 2>/dev/null); then
         log_error "Unable to retrieve GitHub authentication status."
@@ -564,7 +564,7 @@ get_github_username() {
 
 # Prompt for GitHub username with default
 prompt_github_username() {
-    local default_user
+    local default_user=""
     default_user=$(get_github_username) || default_user=""
 
     prompt_text "Enter your personal GitHub account name" "USER" "${default_user:-no user found}"
@@ -650,7 +650,7 @@ set_github_variable() {
     local retry_interval="${RETRY_INTERVAL:-5}"
 
     # Check current value first
-    local current_value
+    local current_value=""
     current_value=$(get_github_variable "$variable_name" "$repo_name")
 
     # Only update if value is different
@@ -684,7 +684,7 @@ set_github_variable_body() {
     local retry_interval="${RETRY_INTERVAL:-5}"
 
     # Check current value first
-    local current_value
+    local current_value=""
     current_value=$(get_github_variable "$variable_name" "$repo_name")
 
     # Only update if value is different
@@ -821,7 +821,7 @@ manage_deploy_key() {
     fi
 
     # Delete existing deploy key if it exists
-    local deploy_key_id
+    local deploy_key_id=""
     deploy_key_id=$(gh repo deploy-key list --repo "${GITHUB_ORG}/$repo_name" --json title,id | jq -r ".[] | select(.title == \"$key_title\") | .id")
     if [[ -n "$deploy_key_id" ]]; then
         retry_command "$max_attempts" "$retry_interval" "delete deploy key" \
@@ -835,9 +835,9 @@ manage_deploy_key() {
     fi
 
     # Set SSH private key as secret for docs builder
-    local secret_key
+    local secret_key=""
     secret_key=$(cat "$key_path")
-    local normalized_repo
+    local normalized_repo=""
     normalized_repo=$(echo "$repo_name" | tr '-' '_' | tr '[:lower:]' '[:upper:]')
     set_github_secret "${normalized_repo}_SSH_PRIVATE_KEY" "$secret_key" "$DOCS_BUILDER_REPO_NAME"
     RUN_INFRASTRUCTURE="true"
@@ -853,7 +853,7 @@ manage_boolean_variable() {
     local default_value="${3:-false}"
     local prompt_text="${4:-$variable_name}"
 
-    local current_value
+    local current_value=""
     local new_value=""
 
     # Get current value
@@ -864,7 +864,7 @@ manage_boolean_variable() {
         prompt_text "Set initial $prompt_text value ('true' or 'false')" "new_value" "$default_value"
     else
         # Variable exists, offer to toggle
-        local opposite_value
+        local opposite_value=""
         if [[ "$current_value" == "true" ]]; then
             opposite_value="false"
         else
@@ -892,7 +892,7 @@ manage_conditional_secret() {
     local prompt_change="${3:-Change the $secret_name}"
     local prompt_create="${4:-Enter value for $secret_name}"
 
-    local secret_value
+    local secret_value=""
 
     # Check if secret exists
     if gh secret list --repo "${GITHUB_ORG}/$repo_name" --json name | jq -r '.[].name' | grep -q "^$secret_name$"; then
@@ -918,7 +918,8 @@ manage_conditional_variable() {
     local prompt_create="${4:-Enter value for $variable_name}"
     local default_value="${5:-}"
 
-    local variable_value current_value
+    local variable_value="" 
+    local current_value=""
 
     # Get current value
     current_value=$(get_github_variable "$variable_name" "$repo_name")
@@ -946,7 +947,7 @@ sync_variable_across_repos() {
     local target_repos=("$@")
 
     # Get value from source repo
-    local source_value
+    local source_value=""
     source_value=$(get_github_variable "$variable_name" "$source_repo")
 
     if [[ -z "$source_value" ]]; then
@@ -956,7 +957,7 @@ sync_variable_across_repos() {
 
     # Sync to all target repos
     for target_repo in "${target_repos[@]}"; do
-        local current_value
+        local current_value=""
         current_value=$(get_github_variable "$variable_name" "$target_repo")
 
         if [[ "$current_value" != "$source_value" ]]; then
@@ -1012,7 +1013,8 @@ update_github_forks() {
 
         if gh repo view "${repo_owner}/${repo_name}" &>/dev/null; then
             # Repository exists - check if it's a fork
-            local repo_info parent
+            local repo_info=""
+            local parent=""
             repo_info=$(gh repo view "$repo_owner/$repo_name" --json parent)
             parent=$(echo "$repo_info" | jq -r '.parent | if type == "object" then (.owner.login + "/" + .name) else "" end')
 
@@ -1049,7 +1051,7 @@ update_github_forks() {
 # Copy dispatch workflow to content repositories
 copy_dispatch_workflow_to_content_repos() {
     local -r workflow_file="dispatch.yml"
-    local temp_dir
+    local temp_dir=""
 
     # Create temporary directory with cleanup trap
     temp_dir=$(mktemp -d)
@@ -1118,7 +1120,11 @@ copy_dispatch_workflow_to_content_repos() {
 update_azure_auth_and_subscription() {
     log_progress "Azure authentication and subscription..."
 
-    local current_sub_name current_sub_id confirm subscription_name needs_login=false
+    local current_sub_name=""
+    local current_sub_id=""
+    local confirm=""
+    local subscription_name=""
+    local needs_login=false
 
     # Step 1: Check if Azure account is active and token is valid
     if ! az account show &>/dev/null || ! az account get-access-token &>/dev/null; then
@@ -1138,7 +1144,7 @@ update_azure_auth_and_subscription() {
     if [[ "$needs_login" == true ]]; then
         log_info "Azure authentication or subscription setup required..."
 
-        local choice_index
+        local choice_index=""
         prompt_choice "Please choose an action:" \
             "Login to Azure and select subscription" \
             "Exit script"
@@ -1373,7 +1379,9 @@ create_or_verify_storage_container() {
 
 # Main function - refactored with better error handling and separation of concerns
 update_azure_tfstate_resources() {
-    local tags owner_email_sanitized name_sanitized
+    local tags=""
+    local owner_email_sanitized=""
+    local name_sanitized=""
 
     # Validate prerequisites
     if ! validate_email "$OWNER_EMAIL"; then
@@ -1420,7 +1428,7 @@ update_azure_tfstate_resources() {
 }
 
 update_azure_credentials() {
-  local sp_output
+  local sp_output=""
   # Create or get existing service principal
   sp_output=$(az ad sp create-for-rbac --name "${PROJECT_NAME}" --role Contributor --scopes "/subscriptions/${1}" --sdk-auth --only-show-errors)
   clientId=$(echo "$sp_output" | jq -r .clientId)
@@ -1463,7 +1471,7 @@ delete_azure_tfstate_resources() {
 
 delete_azure_credentials() {
   # Check if service principal exists
-  local sp_exists
+  local sp_exists=""
   sp_exists=$(az ad sp show --id "http://${PROJECT_NAME}" --query "appId" -o tsv 2>/dev/null)
 
   if [[ -n "$sp_exists" ]]; then
@@ -1478,7 +1486,7 @@ delete_azure_credentials() {
 }
 
 update_pat() {
-    local PAT
+    local PAT=""
     local new_PAT_value=""
 
     # Check if PAT exists in any repository
@@ -1548,10 +1556,10 @@ update_docs_builder_variables() {
 # Generate clone commands for workflow template
 generate_clone_commands() {
     local clone_commands=""
-    local secret_key_name
+    local secret_key_name=""
 
     # Landing page clone command
-    local landing_page_secret_key_name
+    local landing_page_secret_key_name=""
     landing_page_secret_key_name="$(echo "${LANDING_PAGE_REPO_NAME}" | tr '[:upper:]-' '[:lower:]_')_ssh_private_key"
 
     clone_commands+="      - name: Clone Landing Page\n"
@@ -1570,7 +1578,7 @@ generate_clone_commands() {
     clone_commands+="          echo 'INHERIT: docs/theme/mkdocs.yml' > \$TEMP_DIR/landing-page/mkdocs.yml\n\n"
 
     # Theme clone command
-    local theme_secret_key_name
+    local theme_secret_key_name=""
     theme_secret_key_name="$(echo "${THEME_REPO_NAME}" | tr '[:upper:]-' '[:lower:]_')_ssh_private_key"
 
     clone_commands+="      - name: Clone Theme\n"
@@ -1692,7 +1700,7 @@ copy_docs_builder_workflow_to_docs_builder_repo() {
     local template_file="${CURRENT_DIR}/docs-builder.tpl"
     local github_token="$PAT"
     local output_file=".github/workflows/docs-builder.yml"
-    local temp_dir
+    local temp_dir=""
 
     # Validate prerequisites
     if [[ -z "$github_token" ]]; then
@@ -1725,7 +1733,7 @@ copy_docs_builder_workflow_to_docs_builder_repo() {
     }
 
     # Generate and process workflow
-    local clone_commands
+    local clone_commands=""
     clone_commands=$(generate_clone_commands) || {
         log_error "Failed to generate clone commands"
         return 1
@@ -1875,9 +1883,9 @@ update_infrastructure_variables() {
 update_manifests_private_keys() {
     # Set SSH private keys for both manifests repositories
     for repo_name in "$MANIFESTS_INFRASTRUCTURE_REPO_NAME" "$MANIFESTS_APPLICATIONS_REPO_NAME"; do
-        local secret_key
+        local secret_key=""
         secret_key=$(cat "$HOME/.ssh/id_ed25519-${repo_name}")
-        local normalized_repo
+        local normalized_repo=""
         normalized_repo=$(echo "$repo_name" | tr '-' '_' | tr '[:lower:]' '[:upper:]')
         set_github_secret "${normalized_repo}_SSH_PRIVATE_KEY" "$secret_key" "$INFRASTRUCTURE_REPO_NAME"
     done
