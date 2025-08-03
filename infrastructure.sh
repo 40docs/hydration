@@ -853,7 +853,8 @@ manage_boolean_variable() {
     local default_value="${3:-false}"
     local prompt_text="${4:-$variable_name}"
 
-    local current_value new_value=""
+    local current_value
+    local new_value=""
 
     # Get current value
     current_value=$(get_github_variable "$variable_name" "$repo_name")
