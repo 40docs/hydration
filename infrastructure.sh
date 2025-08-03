@@ -386,7 +386,7 @@ log_progress() {
 prompt_confirmation() {
     local prompt="$1"
     local default="${2:-N}"
-    local response
+    local response=""
     local max_attempts=3
     local attempt=1
 
@@ -418,7 +418,7 @@ prompt_secret() {
     local prompt="$1"
     local variable_name="$2"
     local min_length="${3:-$MIN_PASSWORD_LENGTH}"
-    local value
+    local value=""
     local max_attempts=3
     local attempt=1
 
@@ -459,9 +459,9 @@ prompt_secret() {
 prompt_text() {
     local prompt="$1"
     local variable_name="$2"
-    local default="$3"
-    local validation_func="$4"  # Optional validation function
-    local value
+    local default="${3:-}"
+    local validation_func="${4:-}"  # Optional validation function
+    local value=""
     local max_attempts=3
     local attempt=1
 
