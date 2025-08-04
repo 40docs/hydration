@@ -1534,7 +1534,20 @@ upload_entraid_application_logo() {
     local app_object_id="$1"
     local logo_svg="${SCRIPT_DIR}/platform-FortiCloud.svg"
     local logo_png="${SCRIPT_DIR}/platform-FortiCloud.png"
-    local temp_logo_png="${SCRIPT_DIR}/temp-logo.png"
+    
+    # Create secure temporary file for conversion
+    local temp_dir=""
+    local temp_logo_png=""
+    
+    if ! temp_dir=$(create_secure_temp_dir); then
+        log_error "Failed to create secure temporary directory for logo conversion"
+        return 1
+    fi
+    
+    temp_logo_png="${temp_dir}/temp-logo.png"
+    
+    # Set cleanup trap for temporary files
+    trap "rm -rf '$temp_dir'" EXIT
 
     if ! validate_non_empty "$app_object_id" "application object ID"; then
         log_error "Application object ID is required for logo upload"
@@ -1604,9 +1617,36 @@ upload_entraid_application_logo() {
         return 1
     fi
 
-    local file_size
-    file_size=$(stat -f%z "$logo_to_upload" 2>/dev/null || stat -c%s "$logo_to_upload" 2>/dev/null)
+    # Cross-platform file size detection with robust error handling
+    local file_size=""
     
+    # Method 1: Try BSD stat (macOS)
+    if [[ -z "$file_size" ]]; then
+        file_size=$(stat -f%z "$logo_to_upload" 2>/dev/null) || file_size=""
+    fi
+    
+    # Method 2: Try GNU stat (Linux)
+    if [[ -z "$file_size" ]]; then
+        file_size=$(stat -c%s "$logo_to_upload" 2>/dev/null) || file_size=""
+    fi
+    
+    # Method 3: Try wc as fallback (universal)
+    if [[ -z "$file_size" ]]; then
+        file_size=$(wc -c < "$logo_to_upload" 2>/dev/null | tr -d ' ') || file_size=""
+    fi
+    
+    # Method 4: Try ls as last resort
+    if [[ -z "$file_size" ]]; then
+        file_size=$(ls -l "$logo_to_upload" 2>/dev/null | awk '{print $5}') || file_size=""
+    fi
+    
+    # Validate file size was successfully retrieved
+    if [[ -z "$file_size" || ! "$file_size" =~ ^[0-9]+$ ]]; then
+        log_error "Could not determine file size for: $logo_to_upload"
+        return 1
+    fi
+    
+    # Check Azure file size limit (100KB = 102400 bytes)
     if [[ $file_size -gt 102400 ]]; then
         log_warning "Logo file size ($file_size bytes) exceeds Azure limit of 100KB"
         return 1
