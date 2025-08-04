@@ -33,6 +33,9 @@ readonly EXIT_CONFIG_ERROR=2
 readonly EXIT_AUTH_ERROR=3
 readonly EXIT_NETWORK_ERROR=4
 
+# ANSI color code constants for consistent prompt styling
+readonly PROMPT_PREFIX=$'\033[34m?\033[0m'  # Blue question mark with reset
+
 # Initialize global variables
 RUN_INFRASTRUCTURE="false"
 CURRENT_DIR=""
@@ -161,7 +164,6 @@ validate_config() {
         exit $EXIT_CONFIG_ERROR
     fi
 
-    log_success "Configuration validation passed"
 }
 
 # Initialize derived variables and environment settings
@@ -307,25 +309,6 @@ validate_boolean() {
     esac
 }
 
-# Secure temporary file creation
-create_secure_temp_file() {
-    local prefix="${1:-infratemp}"
-    local temp_file=""
-
-    temp_file=$(mktemp "/tmp/${prefix}.XXXXXX") || {
-        log_error "Failed to create secure temporary file"
-        return 1
-    }
-
-    chmod 600 "$temp_file" || {
-        log_error "Failed to set secure permissions on temporary file"
-        rm -f "$temp_file"
-        return 1
-    }
-
-    echo "$temp_file"
-}
-
 create_secure_temp_dir() {
     local prefix="${1:-infratemp}"
     local temp_dir=""
@@ -342,23 +325,6 @@ create_secure_temp_dir() {
     }
 
     echo "$temp_dir"
-}
-
-# Enhanced error handling
-handle_error() {
-    local exit_code="$1"
-    local message="$2"
-    local line_number="${3:-unknown}"
-    local function_name="${4:-main}"
-
-    log_error "❌ Error in function '$function_name' at line $line_number: $message"
-
-    # Cleanup function if it exists
-    if declare -f cleanup_on_error >/dev/null; then
-        cleanup_on_error
-    fi
-
-    exit "$exit_code"
 }
 
 # Standardized message functions
@@ -378,10 +344,6 @@ log_info() {
     echo "• $*"
 }
 
-log_progress() {
-    echo "Processing: $*"
-}
-
 # Enhanced prompt functions with validation
 prompt_confirmation() {
     local prompt="$1"
@@ -392,10 +354,10 @@ prompt_confirmation() {
 
     while (( attempt <= max_attempts )); do
         if [[ "$default" == "Y" ]]; then
-            read -rp "$prompt (Y/n): " response
+            read -rp "${PROMPT_PREFIX} $prompt (Y/n): " response
             response="${response:-Y}"
         else
-            read -rp "$prompt (N/y): " response
+            read -rp "${PROMPT_PREFIX} $prompt (N/y): " response
             response="${response:-N}"
         fi
 
@@ -423,7 +385,7 @@ prompt_secret() {
     local attempt=1
 
     while (( attempt <= max_attempts )); do
-        read -srp "$prompt: " value
+        read -srp "${PROMPT_PREFIX} $prompt: " value
         echo  # New line after hidden input
 
         if (( ${#value} < min_length )); then
@@ -467,10 +429,10 @@ prompt_text() {
 
     while (( attempt <= max_attempts )); do
         if [[ -n "$default" ]]; then
-            read -rp "$prompt [$default]: " value
+            read -rp "${PROMPT_PREFIX} $prompt [$default]: " value
             value="${value:-$default}"
         else
-            read -rp "$prompt: " value
+            read -rp "${PROMPT_PREFIX} $prompt: " value
         fi
 
         if [[ -z "$value" ]]; then
@@ -516,7 +478,7 @@ prompt_choice() {
     done
 
     while true; do
-        read -rp "Choose an option (1-${#options[@]}): " choice
+        read -rp "${PROMPT_PREFIX} Choose an option (1-${#options[@]}): " choice
         if [[ "$choice" =~ ^[0-9]+$ ]] && (( choice >= 1 && choice <= ${#options[@]} )); then
             return $((choice - 1))
         else
@@ -657,7 +619,7 @@ set_github_variable() {
     if [[ "$current_value" != "$variable_value" ]]; then
         for ((attempt=1; attempt<=max_retries; attempt++)); do
             if gh variable set "$variable_name" -b "$variable_value" --repo "${GITHUB_ORG}/$repo_name" &>/dev/null; then
-                log_success "Successfully set variable $variable_name for ${GITHUB_ORG}/$repo_name"
+                log_success "Set Actions variable $variable_name for ${GITHUB_ORG}/$repo_name"
                 return 0
             else
                 if [[ $attempt -lt $max_retries ]]; then
@@ -691,7 +653,7 @@ set_github_variable_body() {
     if [[ "$current_value" != "$variable_value" ]]; then
         for ((attempt=1; attempt<=max_retries; attempt++)); do
             if gh variable set "$variable_name" --body "$variable_value" --repo "${GITHUB_ORG}/$repo_name" &>/dev/null; then
-                log_success "Successfully set variable $variable_name for ${GITHUB_ORG}/$repo_name"
+                log_success "Set Actions variable $variable_name for ${GITHUB_ORG}/$repo_name"
                 return 0
             else
                 if [[ $attempt -lt $max_retries ]]; then
@@ -777,7 +739,6 @@ generate_ssh_key() {
         return 1
     }
 
-    log_success "Successfully generated SSH key pair: $key_name"
     return 0
 }
 
@@ -792,6 +753,142 @@ set_multiple_variables() {
         local value="${variable#*:}"
         set_github_variable "$key" "$value" "$repo_name"
     done
+}
+
+# DRY Consolidation Function: Set GitHub variable across multiple repositories
+# Consolidates the repeated pattern of setting the same variable in multiple repos
+#
+# Arguments:
+#   $1 - Variable name
+#   $2 - Variable value
+#   $3+ - Repository names to set the variable in
+#
+# Returns:
+#   0 on success, 1 on failure
+set_github_variable_multiple_repos() {
+    local variable_name="$1"
+    local variable_value="$2"
+    shift 2
+    local repos=("$@")
+
+    if ! validate_non_empty "$variable_name" "variable name"; then
+        return 1
+    fi
+
+    if ! validate_non_empty "$variable_value" "variable value"; then
+        return 1
+    fi
+
+    if [[ ${#repos[@]} -eq 0 ]]; then
+        log_error "At least one repository must be specified"
+        return 1
+    fi
+
+    local success_count=0
+    local total_repos=${#repos[@]}
+
+    for repo_name in "${repos[@]}"; do
+        if retry_command "$MAX_RETRIES" "$RETRY_INTERVAL" "set $variable_name in $repo_name repo" \
+            gh variable set "$variable_name" -b "$variable_value" --repo "${GITHUB_ORG}/$repo_name"; then
+            ((success_count++))
+        else
+            log_error "Failed to set $variable_name in $repo_name after $MAX_RETRIES attempts"
+        fi
+    done
+
+    if [[ $success_count -eq $total_repos ]]; then
+        log_success "Successfully set $variable_name to $variable_value in all $total_repos repositories"
+        return 0
+    else
+        log_error "Set $variable_name succeeded in $success_count/$total_repos repositories"
+        return 1
+    fi
+}
+
+# DRY Consolidation Function: Get Azure AD app object ID with timeout
+# Consolidates the repeated pattern of retrieving application object ID
+#
+# Arguments:
+#   $1 - Application ID (client ID)
+#   $2 - Timeout duration (optional, defaults to 30)
+#
+# Globals:
+#   Sets: APP_OBJECT_ID (output variable)
+#
+# Returns:
+#   0 on success, 1 on failure
+get_azure_app_object_id() {
+    local app_id="$1"
+    local timeout_duration="${2:-30}"
+
+    if ! validate_non_empty "$app_id" "application ID"; then
+        return 1
+    fi
+
+    # Clear the global variable
+    APP_OBJECT_ID=""
+
+    # Use timeout to prevent hanging
+    if ! APP_OBJECT_ID=$(timeout "$timeout_duration" az ad app show --id "$app_id" --query "id" --output tsv 2>/dev/null); then
+        log_error "Failed to retrieve application object ID (timeout after ${timeout_duration}s)"
+        return 1
+    fi
+
+    if [[ -z "$APP_OBJECT_ID" || "$APP_OBJECT_ID" == "null" ]]; then
+        log_error "Application object ID is empty or null"
+        return 1
+    fi
+
+    return 0
+}
+
+# DRY Consolidation Function: Set GitHub secret across multiple repositories
+# Consolidates the repeated pattern of setting the same secret in multiple repos
+#
+# Arguments:
+#   $1 - Secret name
+#   $2 - Secret value
+#   $3+ - Repository names to set the secret in
+#
+# Returns:
+#   0 on success, 1 on failure
+set_github_secret_multiple_repos() {
+    local secret_name="$1"
+    local secret_value="$2"
+    shift 2
+    local repos=("$@")
+
+    if ! validate_non_empty "$secret_name" "secret name"; then
+        return 1
+    fi
+
+    if ! validate_non_empty "$secret_value" "secret value"; then
+        return 1
+    fi
+
+    if [[ ${#repos[@]} -eq 0 ]]; then
+        log_error "At least one repository must be specified"
+        return 1
+    fi
+
+    local success_count=0
+    local total_repos=${#repos[@]}
+
+    for repo_name in "${repos[@]}"; do
+        if set_github_secret "$secret_name" "$secret_value" "$repo_name" "GitHub secret $secret_name for repository $repo_name"; then
+            ((success_count++))
+        else
+            log_error "Failed to set secret $secret_name in $repo_name"
+        fi
+    done
+
+    if [[ $success_count -eq $total_repos ]]; then
+        log_success "Successfully set secret $secret_name in all $total_repos repositories"
+        return 0
+    else
+        log_error "Set secret $secret_name succeeded in $success_count/$total_repos repositories"
+        return 1
+    fi
 }
 
 # Generic function to set multiple secrets from key:value pairs
@@ -961,10 +1058,9 @@ sync_variable_across_repos() {
         current_value=$(get_github_variable "$variable_name" "$target_repo")
 
         if [[ "$current_value" != "$source_value" ]]; then
-            log_info "Syncing $variable_name to $target_repo..."
             retry_command "$MAX_RETRIES" "$RETRY_INTERVAL" "sync variable $variable_name to $target_repo" \
                 gh variable set "$variable_name" --body "$source_value" --repo "${GITHUB_ORG}/$target_repo"
-            log_success "Successfully synced $variable_name to $target_repo"
+            log_success "Set Actions variable $variable_name to $target_repo"
         fi
     done
 }
@@ -988,7 +1084,6 @@ update_github_auth_login() {
     export GITHUB_TOKEN=""
 
     if ! gh auth status &>/dev/null; then
-        log_info "GitHub authentication required..."
         if ! gh auth login; then
             log_error "GitHub login failed."
             exit 1
@@ -996,7 +1091,7 @@ update_github_auth_login() {
     fi
 
     gh auth setup-git
-    log_success "Successfully verified GitHub authentication."
+    log_success "Set GitHub authentication."
 }
 
 # Manage GitHub repository forks
@@ -1006,10 +1101,7 @@ update_github_forks() {
     local -r max_retries=3
     local -r delay_seconds=5
 
-    log_progress "repository forks..."
-
     for repo_name in "${ALLREPOS[@]}"; do
-        log_info "Processing repository: $repo_name"
 
         if gh repo view "${repo_owner}/${repo_name}" &>/dev/null; then
             # Repository exists - check if it's a fork
@@ -1020,18 +1112,14 @@ update_github_forks() {
 
             if [[ -n "$parent" ]]; then
                 # Repository is a fork, sync it
-                log_info "  Syncing fork: $repo_name"
                 if ! gh repo sync "$repo_owner/$repo_name" --branch main --force; then
                     log_warning "Failed to sync $repo_name"
                 fi
-            else
-                log_info "  Repository $repo_name exists but is not a fork. Skipping."
             fi
         else
             # Repository does not exist, fork it
-            log_info "  Forking $upstream_org/$repo_name..."
             if gh repo fork "$upstream_org/$repo_name" --clone=false; then
-                log_success "Successfully forked $upstream_org/$repo_name"
+                log_success "Forked $upstream_org/$repo_name"
 
                 # Retry sync after forking
                 if ! retry_command "$max_retries" "$delay_seconds" "sync $repo_name after forking" \
@@ -1044,7 +1132,6 @@ update_github_forks() {
         fi
     done
 
-    log_success "Successfully completed repository fork processing."
 }
 
 
@@ -1118,7 +1205,6 @@ copy_dispatch_workflow_to_content_repos() {
 
 # Comprehensive Azure authentication and subscription setup
 update_azure_auth_and_subscription() {
-    log_progress "Azure authentication and subscription..."
 
     local current_sub_name=""
     local current_sub_id=""
@@ -1135,14 +1221,12 @@ update_azure_auth_and_subscription() {
         current_sub_id=$(az account show --query "id" --output tsv 2>/dev/null)
 
         if [[ -z "$current_sub_name" || -z "$current_sub_id" ]]; then
-            log_info "Azure authentication is valid, but no subscription is set as default."
             needs_login=true
         fi
     fi
 
     # Step 3: Perform login if needed
     if [[ "$needs_login" == true ]]; then
-        log_info "Azure authentication or subscription setup required..."
 
         local choice_index=""
         prompt_choice "Please choose an action:" \
@@ -1152,14 +1236,12 @@ update_azure_auth_and_subscription() {
 
         case "$choice_index" in
           0)
-            log_info "Initiating Azure login..."
             if ! az login --use-device-code; then
                 log_error "Azure login failed."
                 exit 1
             fi
             ;;
           1)
-            log_info "Exiting script as requested."
             exit 0
             ;;
         esac
@@ -1171,7 +1253,6 @@ update_azure_auth_and_subscription() {
 
     # Step 4: Handle subscription selection
     if [[ -z "$current_sub_name" || -z "$current_sub_id" ]]; then
-        log_info "No default subscription found. Listing available subscriptions..."
         az account list --query '[].{Name:name, ID:id}' --output table
         prompt_text "Enter the name of the subscription you want to set as default" "subscription_name"
         SUBSCRIPTION_ID=$(az account list --query "[?name=='$subscription_name'].id" --output tsv 2>/dev/null)
@@ -1180,7 +1261,7 @@ update_azure_auth_and_subscription() {
             exit 1
         fi
         az account set --subscription "$SUBSCRIPTION_ID"
-        log_success "Successfully set subscription: $subscription_name"
+        log_success "Set Azure subscription: $subscription_name"
     else
         # Confirm current subscription
         if prompt_confirmation "Use the current default subscription: $current_sub_name (ID: $current_sub_id)" "Y"; then
@@ -1205,7 +1286,6 @@ update_azure_auth_and_subscription() {
     fi
 
     get_signed_in_user_name
-    log_success "Successfully verified Azure authentication and subscription."
 }
 
 update_owner_email() {
@@ -1273,16 +1353,12 @@ create_or_verify_resource_group() {
         return 1
     fi
 
-    log_info "Creating or verifying resource group: $resource_group_name"
-
     if ! az group show -n "$resource_group_name" &>/dev/null; then
         if ! az group create -n "$resource_group_name" -l "$location"; then
             log_error "Failed to create resource group: $resource_group_name"
             return 1
         fi
-        log_success "Created resource group: $resource_group_name"
-    else
-        log_info "Resource group already exists: $resource_group_name"
+        log_success "Create Azure resource group: $resource_group_name"
     fi
 
     # Update tags
@@ -1308,16 +1384,12 @@ create_or_verify_storage_account() {
         return 1
     fi
 
-    log_info "Creating or verifying storage account: $storage_account_name"
-
     if ! az storage account show -n "$storage_account_name" -g "$resource_group_name" &>/dev/null; then
         if ! az storage account create -n "$storage_account_name" -g "$resource_group_name" -l "$location" --sku Standard_LRS &>/dev/null; then
             log_error "Failed to create storage account: $storage_account_name"
             return 1
         fi
-        log_success "Created storage account: $storage_account_name"
-    else
-        log_info "Storage account already exists: $storage_account_name"
+        log_success "Create Azure storage account: $storage_account_name"
     fi
 
     # Update tags
@@ -1347,12 +1419,9 @@ create_or_verify_storage_container() {
         return 1
     fi
 
-    log_info "Creating or verifying storage container: $container_name"
-
     while (( attempt <= max_attempts )); do
         # Check if container exists
         if az storage container show -n "$container_name" --account-name "$storage_account_name" &>/dev/null; then
-            log_info "Storage container already exists: $container_name"
             return 0
         fi
 
@@ -1361,7 +1430,7 @@ create_or_verify_storage_container() {
             --account-name "$storage_account_name" \
             --auth-mode login \
             --metadata Username="$owner_email_sanitized" Name="$name_sanitized" &>/dev/null; then
-            log_success "Created storage container: $container_name"
+            log_success "Create Azure storage container: $container_name"
             return 0
         fi
 
@@ -1406,8 +1475,6 @@ update_azure_tfstate_resources() {
     owner_email_sanitized="${OWNER_EMAIL// /_}"
     name_sanitized="${NAME// /_}"
 
-    log_info "Setting up Azure Terraform state resources..."
-
     # Create or verify resource group
     if ! create_or_verify_resource_group "${PROJECT_NAME}-tfstate" "$LOCATION" "$tags"; then
         return 1
@@ -1423,7 +1490,6 @@ update_azure_tfstate_resources() {
         return 1
     fi
 
-    log_success "Successfully set up Azure Terraform state resources"
     return 0
 }
 
@@ -1452,6 +1518,218 @@ update_azure_credentials() {
   fi
 }
 
+# Configure Entra ID application settings (Enhanced Version)
+# Uses Microsoft Graph API directly for better reliability
+#
+# Arguments:
+#   $1 - Application ID (clientId) from service principal creation
+#
+# Globals:
+#   Uses: DNS_ZONE for dynamic URL construction
+#
+# Returns:
+#   0 on success, 1 on failure
+configure_entraid_application() {
+    local app_id="$1"
+    local cloudshell_fqdn="cloudshell.${DNS_ZONE}"
+    local home_page_url="https://${cloudshell_fqdn}"
+    local terms_url="https://${cloudshell_fqdn}/termsofservice"
+    local privacy_url="https://${cloudshell_fqdn}/privacystatement"
+    local redirect_url="${home_page_url}/redirect"
+    local timeout_duration=30
+
+    if ! validate_non_empty "$app_id" "application ID"; then
+        log_error "Application ID is required for Entra ID configuration"
+        return 1
+    fi
+
+    # Get application object ID with timeout
+    if ! get_azure_app_object_id "$app_id" "$timeout_duration"; then
+        return 1
+    fi
+    local app_object_id="$APP_OBJECT_ID"
+
+    # Method 1: Update web settings via Microsoft Graph API
+    local web_payload=""
+    web_payload=$(cat <<EOF
+{
+    "web": {
+        "homePageUrl": "${home_page_url}",
+        "redirectUris": ["${redirect_url}"]
+    }
+}
+EOF
+)
+
+    local graph_web_success=false
+    if timeout $timeout_duration az rest \
+        --method PATCH \
+        --url "https://graph.microsoft.com/v1.0/applications/${app_object_id}" \
+        --headers "Content-Type=application/json" \
+        --body "$web_payload" >/dev/null 2>&1; then
+        graph_web_success=true
+    else
+        log_warning "Failed to update web settings via Microsoft Graph API"
+    fi
+
+    # Method 2: Update service info via Microsoft Graph API
+    local info_payload=""
+    info_payload=$(cat <<EOF
+{
+    "info": {
+        "logoUrl": "${home_page_url}/logo.png",
+        "termsOfServiceUrl": "${terms_url}",
+        "privacyStatementUrl": "${privacy_url}",
+        "marketingUrl": "${home_page_url}",
+        "supportUrl": "${home_page_url}"
+    }
+}
+EOF
+)
+
+    local graph_info_success=false
+    if timeout $timeout_duration az rest \
+        --method PATCH \
+        --url "https://graph.microsoft.com/v1.0/applications/${app_object_id}" \
+        --headers "Content-Type=application/json" \
+        --body "$info_payload" >/dev/null 2>&1; then
+        graph_info_success=true
+    else
+        log_warning "Failed to update service information via Microsoft Graph API"
+    fi
+
+    # Wait for propagation
+    sleep 3
+
+    # Summary
+    if [[ "$graph_web_success" == true && "$graph_info_success" == true ]]; then
+        log_success "Set Azure Entra ID application"
+        return 0
+    else
+        log_error "Entra ID application configuration failed"
+        return 1
+    fi
+
+}
+
+# Verify Entra ID application settings
+# Checks the actual configured values in the Entra ID application
+#
+# Arguments:
+#   $1 - Application ID (clientId) from service principal creation
+#
+# Globals:
+#   Uses: DNS_ZONE for expected URL construction
+#
+# Returns:
+#   0 on success, 1 on verification failure
+verify_entraid_application_settings() {
+    local app_id="$1"
+    local cloudshell_fqdn="cloudshell.${DNS_ZONE}"
+    local expected_home_page_url="https://${cloudshell_fqdn}"
+    local expected_terms_url="https://${cloudshell_fqdn}/termsofservice"
+    local expected_privacy_url="https://${cloudshell_fqdn}/privacystatement"
+    local verification_failed=false
+
+    if ! validate_non_empty "$app_id" "application ID"; then
+        log_error "Application ID is required for verification"
+        return 1
+    fi
+
+    # Get application object ID for Graph API queries
+    local app_object_id=""
+    app_object_id=$(az ad app show --id "$app_id" --query "id" --output tsv 2>/dev/null)
+
+    if [[ -z "$app_object_id" ]]; then
+        log_error "Could not retrieve application object ID for verification"
+        return 1
+    fi
+
+    # Verify basic web settings using Azure CLI
+    local web_home_page_url=""
+    local web_redirect_uris=""
+
+    web_home_page_url=$(az ad app show --id "$app_id" --query "web.homePageUrl" --output tsv 2>/dev/null)
+    web_redirect_uris=$(az ad app show --id "$app_id" --query "web.redirectUris[0]" --output tsv 2>/dev/null)
+
+    if [[ "$web_home_page_url" == "$expected_home_page_url" ]]; then
+        log_success "Home page URL correctly set: $web_home_page_url"
+    else
+        log_error "✗ Home page URL mismatch - Expected: $expected_home_page_url, Actual: $web_home_page_url"
+        verification_failed=true
+    fi
+
+    if [[ "$web_redirect_uris" == "${expected_home_page_url}/redirect" ]]; then
+        log_success "Redirect URI correctly set: $web_redirect_uris"
+    else
+        log_warning "✗ Redirect URI mismatch - Expected: ${expected_home_page_url}/redirect, Actual: $web_redirect_uris"
+    fi
+
+    # Verify service URLs using Microsoft Graph API
+    local graph_response=""
+    graph_response=$(az rest \
+        --method GET \
+        --url "https://graph.microsoft.com/v1.0/applications/${app_object_id}" \
+        --query "{info: info, web: web}" \
+        --output json 2>/dev/null)
+
+    if [[ -n "$graph_response" && "$graph_response" != "null" ]]; then
+        local actual_terms_url=""
+        local actual_privacy_url=""
+        local actual_logo_url=""
+        local actual_web_home_url=""
+
+        actual_terms_url=$(echo "$graph_response" | jq -r '.info.termsOfServiceUrl // "null"')
+        actual_privacy_url=$(echo "$graph_response" | jq -r '.info.privacyStatementUrl // "null"')
+        actual_logo_url=$(echo "$graph_response" | jq -r '.info.logoUrl // "null"')
+        actual_web_home_url=$(echo "$graph_response" | jq -r '.web.homePageUrl // "null"')
+
+        # Check terms of service URL
+        if [[ "$actual_terms_url" == "$expected_terms_url" ]]; then
+            log_success "Terms of service URL correctly set: $actual_terms_url"
+        else
+            log_error "✗ Terms of service URL mismatch - Expected: $expected_terms_url, Actual: $actual_terms_url"
+            verification_failed=true
+        fi
+
+        # Check privacy statement URL
+        if [[ "$actual_privacy_url" == "$expected_privacy_url" ]]; then
+            log_success "Privacy statement URL correctly set: $actual_privacy_url"
+        else
+            log_error "✗ Privacy statement URL mismatch - Expected: $expected_privacy_url, Actual: $actual_privacy_url"
+            verification_failed=true
+        fi
+
+        # Check logo URL (informational)
+        if [[ "$actual_logo_url" == "${expected_home_page_url}/logo.png" ]]; then
+            log_success "Logo URL correctly set: $actual_logo_url"
+        fi
+
+        # Check web home page URL from Graph API
+        if [[ "$actual_web_home_url" == "$expected_home_page_url" ]]; then
+            log_success "Web home page URL (Graph API) correctly set: $actual_web_home_url"
+        else
+            log_warning "✗ Web home page URL (Graph API) mismatch - Expected: $expected_home_page_url, Actual: $actual_web_home_url"
+        fi
+    else
+        log_error "Failed to retrieve application settings via Microsoft Graph API"
+        verification_failed=true
+    fi
+
+    # Summary
+    if [[ "$verification_failed" == true ]]; then
+        log_error "Entra ID application settings verification failed"
+        return 1
+    else
+        return 0
+    fi
+}
+
+# Troubleshoot Entra ID application settings
+# Delete Azure Terraform state resources from storage account and service principal
+# This function removes both the storage container and the service principal
+# Returns:
+#   0 on success, 1 on failure
 delete_azure_tfstate_resources() {
   # Delete storage container if it exists
   if az storage container show -n "${PROJECT_NAME}tfstate" --account-name "${AZURE_STORAGE_ACCOUNT_NAME}" &>/dev/null; then
@@ -1627,7 +1905,6 @@ validate_template_file() {
         return 1
     fi
 
-    log_info "Template file validation passed: $template_file"
     return 0
 }
 
@@ -1656,7 +1933,6 @@ process_workflow_template() {
         return 1
     }
 
-    log_success "Successfully processed workflow template"
     return 0
 }
 
@@ -1666,7 +1942,6 @@ commit_and_push_workflow() {
     local repo_name="$2"
 
     if [[ ! -n $(git status --porcelain) ]]; then
-        log_info "No changes detected for $repo_name"
         return 0
     fi
 
@@ -1754,7 +2029,6 @@ copy_docs_builder_workflow_to_docs_builder_repo() {
         return 1
     }
 
-    log_success "Successfully updated docs builder workflow"
     return 0
 }
 
@@ -1797,14 +2071,423 @@ update_azure_secrets() {
     RUN_INFRASTRUCTURE="true"
 }
 
-update_cloudshell_secrets() {
-    # Manage CloudShell Directory Tenant ID
-    manage_conditional_secret "CLOUDSHELL_DIRECTORY_TENANT_ID" "$INFRASTRUCTURE_REPO_NAME" \
-        "Change the CloudShell Directory Tenant ID" "Enter CloudShell Directory Tenant ID"
+# Configure API permissions for CLOUDSHELL application (Idempotent version)
+# Ensures only the specified permissions exist, removing any duplicates
+configure_cloudshell_api_permissions() {
+    local client_id="$1"
+    local timeout_duration=30
 
-    # Manage CloudShell Directory Client ID
-    manage_conditional_secret "CLOUDSHELL_DIRECTORY_CLIENT_ID" "$INFRASTRUCTURE_REPO_NAME" \
-        "Change the CloudShell Directory Client ID" "Enter CloudShell Directory Client ID"
+    if [[ -z "$client_id" ]]; then
+        log_error "Client ID is required for configuring API permissions"
+        return 1
+    fi
+
+    # Microsoft Graph API ID
+    local graph_api_id="00000003-0000-0000-c000-000000000000"
+
+    # Define required permissions with their IDs
+    # GroupMember.Read.All: Type=Delegated, Description="Read group membership", Admin consent required=yes
+    local group_member_read_id="bc024368-1153-4739-b217-4326f2e966d0"
+
+    # openid: Type=Delegated, Description="Sign users in", Admin consent=no
+    local openid_id="37f7f235-527c-4136-accd-4a02d197296e"
+
+    # User.Read: Type=Delegated, Description="Sign in and read user profile", Admin consent=no
+    local user_read_id="e1fe6dd8-ba31-4d61-89e7-88639da4683d"
+
+    # Get application object ID for direct Graph API calls
+    if ! get_azure_app_object_id "$client_id" "$timeout_duration"; then
+        return 1
+    fi
+    local app_object_id="$APP_OBJECT_ID"
+
+    # Get current permissions to understand the state
+    local current_permissions=""
+    if current_permissions=$(timeout $timeout_duration az rest \
+        --method GET \
+        --url "https://graph.microsoft.com/v1.0/applications/${app_object_id}" \
+        --query "requiredResourceAccess" \
+        --output json 2>/dev/null); then
+
+        local graph_perms_count=0
+        if [[ -n "$current_permissions" && "$current_permissions" != "null" && "$current_permissions" != "[]" ]]; then
+            graph_perms_count=$(echo "$current_permissions" | jq -r "map(select(.resourceAppId == \"$graph_api_id\")) | length")
+        fi
+    else
+        log_warning "Could not retrieve current permissions"
+    fi
+
+    # Set the exact permissions we want using Graph API
+    local permissions_payload=""
+    permissions_payload=$(cat <<EOF
+{
+    "requiredResourceAccess": [
+        {
+            "resourceAppId": "${graph_api_id}",
+            "resourceAccess": [
+                {
+                    "id": "${group_member_read_id}",
+                    "type": "Scope"
+                },
+                {
+                    "id": "${openid_id}",
+                    "type": "Scope"
+                },
+                {
+                    "id": "${user_read_id}",
+                    "type": "Scope"
+                }
+            ]
+        }
+    ]
+}
+EOF
+)
+
+    # Apply the permissions (this replaces all existing permissions)
+    if timeout $timeout_duration az rest \
+        --method PATCH \
+        --url "https://graph.microsoft.com/v1.0/applications/${app_object_id}" \
+        --headers "Content-Type=application/json" \
+        --body "$permissions_payload" >/dev/null 2>&1; then
+        log_success "Set Microsoft Graph API permissions"
+    else
+        log_error "Failed to configure API permissions via Microsoft Graph API"
+
+        # Try to remove existing Microsoft Graph permissions
+        timeout $timeout_duration az ad app permission delete --id "$client_id" --api "$graph_api_id" 2>/dev/null || true
+
+        sleep 2
+
+        # Add the required permissions
+        if timeout $timeout_duration az ad app permission add --id "$client_id" --api "$graph_api_id" --api-permissions "${group_member_read_id}=Scope" &>/dev/null; then
+            log_success "Set GroupMember.Read.All permission"
+        else
+            log_warning "Failed to add GroupMember.Read.All permission"
+        fi
+
+        if timeout $timeout_duration az ad app permission add --id "$client_id" --api "$graph_api_id" --api-permissions "${openid_id}=Scope" &>/dev/null; then
+            log_success "Set openid permission"
+        else
+            log_warning "Failed to add openid permission"
+        fi
+
+        if timeout $timeout_duration az ad app permission add --id "$client_id" --api "$graph_api_id" --api-permissions "${user_read_id}=Scope" &>/dev/null; then
+            log_success "Set User.Read permission"
+        else
+            log_warning "Failed to add User.Read permission"
+        fi
+    fi
+
+    # Wait for permissions to propagate
+    sleep 3
+
+    # Grant admin consent
+    if grant_cloudshell_admin_consent "$client_id"; then
+        log_success "Admin consent granted successfully"
+    else
+        log_warning "Admin consent failed - checking if already granted..."
+
+        # Check current status even if grant failed
+        if check_cloudshell_admin_consent "$client_id"; then
+            log_success "Admin consent verification shows permissions are already granted"
+        else
+            log_warning "Manual admin consent will be required for full CLOUDSHELL functionality"
+        fi
+    fi
+
+    return 0
+}
+
+# Grant admin consent for CLOUDSHELL application permissions (Standalone function)
+# This function can be called independently to grant admin consent
+#
+# Arguments:
+#   $1 - Application ID (clientId)
+#
+# Returns:
+#   0 if admin consent was granted successfully
+#   1 if admin consent failed
+grant_cloudshell_admin_consent() {
+    local client_id="$1"
+    local timeout_duration=30
+
+    if [[ -z "$client_id" ]]; then
+        log_error "Client ID is required for granting admin consent"
+        return 1
+    fi
+
+    # Microsoft Graph API ID
+    local graph_api_id="00000003-0000-0000-c000-000000000000"
+
+    local admin_consent_success=false
+    local consent_attempts=0
+    local max_consent_attempts=3
+
+    # Get tenant ID for admin consent URL construction
+    local tenant_id=""
+    tenant_id=$(timeout 10 az account show --query tenantId --output tsv 2>/dev/null || echo "")
+
+    if [[ -z "$tenant_id" || "$tenant_id" == "null" ]]; then
+        log_warning "Could not retrieve tenant ID"
+    fi
+
+    while [[ $consent_attempts -lt $max_consent_attempts && "$admin_consent_success" != true ]]; do
+        consent_attempts=$((consent_attempts + 1))
+
+        # Method 1: Azure CLI (most common approach)
+        if timeout $timeout_duration az ad app permission admin-consent --id "$client_id" &>/dev/null; then
+            admin_consent_success=true
+            break
+        else
+            log_warning "Azure CLI admin consent failed (attempt $consent_attempts)"
+        fi
+
+        # Method 2: Microsoft Graph API direct approach (if Azure CLI failed)
+        if [[ "$admin_consent_success" != true && -n "$tenant_id" ]]; then
+
+            # Get the service principal object ID for the CLOUDSHELL app
+            local sp_object_id=""
+            sp_object_id=$(timeout 10 az ad sp list --filter "appId eq '$client_id'" --query "[0].id" --output tsv 2>/dev/null || echo "")
+
+            # Get Microsoft Graph service principal object ID
+            local graph_sp_object_id=""
+            graph_sp_object_id=$(timeout 10 az ad sp list --filter "appId eq '$graph_api_id'" --query "[0].id" --output tsv 2>/dev/null || echo "")
+
+            if [[ -n "$sp_object_id" && "$sp_object_id" != "null" && -n "$graph_sp_object_id" && "$graph_sp_object_id" != "null" ]]; then
+                # Try to grant consent using the Graph API
+                local consent_response=""
+                consent_response=$(timeout $timeout_duration az rest \
+                    --method POST \
+                    --url "https://graph.microsoft.com/v1.0/oauth2PermissionGrants" \
+                    --headers "Content-Type=application/json" \
+                    --body "{
+                        \"clientId\": \"$sp_object_id\",
+                        \"consentType\": \"AllPrincipals\",
+                        \"resourceId\": \"$graph_sp_object_id\",
+                        \"scope\": \"GroupMember.Read.All openid User.Read\"
+                    }" --output json 2>/dev/null)
+
+                if [[ $? -eq 0 && -n "$consent_response" ]]; then
+                    admin_consent_success=true
+                    break
+                else
+                    log_warning "Microsoft Graph API admin consent failed (attempt $consent_attempts)"
+                fi
+            else
+                log_warning "Could not find service principal IDs for Graph API consent (attempt $consent_attempts)"
+            fi
+        fi
+
+        # Wait before retry (except on last attempt)
+        if [[ $consent_attempts -lt $max_consent_attempts ]]; then
+            log_warning "Waiting 3 seconds before retry..."
+            sleep 3
+        fi
+    done
+
+    # Final admin consent status and verification
+    if [[ "$admin_consent_success" == true ]]; then
+
+        # Verify consent was applied
+        local verify_sp_object_id=""
+        verify_sp_object_id=$(timeout 10 az ad sp list --filter "appId eq '$client_id'" --query "[0].id" --output tsv 2>/dev/null || echo "")
+
+        if [[ -n "$verify_sp_object_id" && "$verify_sp_object_id" != "null" ]]; then
+            local consent_verification=""
+            consent_verification=$(timeout 10 az rest \
+                --method GET \
+                --url "https://graph.microsoft.com/v1.0/oauth2PermissionGrants?\$filter=clientId eq '$verify_sp_object_id'" \
+                --query "value[0].scope" --output tsv 2>/dev/null || echo "")
+
+            if [[ -n "$consent_verification" && "$consent_verification" != "null" ]]; then
+                log_success "Admin consent verified: Granted scopes = $consent_verification"
+            else
+                log_warning "Admin consent verification: Could not verify, but consent command succeeded"
+            fi
+        fi
+
+        return 0
+    else
+        log_error "Failed to grant admin consent automatically after $max_consent_attempts attempts"
+
+        if [[ -n "$tenant_id" ]]; then
+            local admin_consent_url="https://login.microsoftonline.com/${tenant_id}/adminconsent?client_id=${client_id}"
+            log_info "Direct admin consent URL (open in browser):"
+            log_info "$admin_consent_url"
+        fi
+
+        return 1
+    fi
+}
+
+# Check admin consent status for CLOUDSHELL application
+# This function verifies if admin consent has been granted
+#
+# Arguments:
+#   $1 - Application ID (clientId)
+#
+# Returns:
+#   0 if admin consent is granted
+#   1 if admin consent is not granted or check failed
+check_cloudshell_admin_consent() {
+    local client_id="$1"
+
+    if [[ -z "$client_id" ]]; then
+        log_error "Client ID is required for checking admin consent"
+        return 1
+    fi
+
+    # Get the service principal object ID for the CLOUDSHELL app
+    local sp_object_id=""
+    sp_object_id=$(timeout 10 az ad sp list --filter "appId eq '$client_id'" --query "[0].id" --output tsv 2>/dev/null || echo "")
+
+    if [[ -z "$sp_object_id" || "$sp_object_id" == "null" ]]; then
+        log_error "Could not find service principal for application $client_id"
+        return 1
+    fi
+
+    # Check for granted permissions
+    local consent_status=""
+    consent_status=$(timeout 10 az rest \
+        --method GET \
+        --url "https://graph.microsoft.com/v1.0/oauth2PermissionGrants?\$filter=clientId eq '$sp_object_id'" \
+        --query "value[0].scope" --output tsv 2>/dev/null || echo "")
+
+    if [[ -n "$consent_status" && "$consent_status" != "null" ]]; then
+        log_success "Set Admin consent = Granted"
+        return 0
+    else
+        log_warning "Admin consent appears to be missing or incomplete"
+        return 1
+    fi
+}
+
+# Configure authentication settings for CLOUDSHELL application
+configure_cloudshell_authentication() {
+    local client_id="$1"
+
+    if [[ -z "$client_id" ]]; then
+        log_error "Client ID is required for configuring authentication"
+        return 1
+    fi
+
+    # Enable public client flows (allow device authentication)
+    # This sets the "Allow public client flows" setting to "Yes" in Azure portal under Manage > Authentication
+    # Try the dedicated parameter first, fallback to --set if needed
+    if az ad app update --id "$client_id" --is-fallback-public-client true &>/dev/null; then
+        log_success "Set Public client flows enabled"
+    elif az ad app update --id "$client_id" --set publicClient=true &>/dev/null; then
+        log_success "Public client flows enabled successfully (fallback method)"
+    else
+        log_warning "Failed to enable public client flows. You may need to enable this manually in the Azure portal under Manage > Authentication > Allow public client flows (enable)"
+    fi
+
+    return 0
+}
+
+update_cloudshell_secrets() {
+
+    local app_display_name="CLOUDSHELL"
+    local tenant_id=""
+    local client_id=""
+
+    # Get current tenant info
+    if command -v az &> /dev/null && az account show &> /dev/null; then
+        tenant_id=$(az account show --query tenantId --output tsv 2>/dev/null || echo "")
+
+        if [[ -n "$tenant_id" ]]; then
+
+            # Check if CLOUDSHELL application exists
+            local existing_app_count
+            existing_app_count=$(az ad app list --display-name "$app_display_name" --query "length(@)" --output tsv 2>/dev/null || echo "0")
+
+            if [[ "$existing_app_count" -gt 0 ]]; then
+                # Application exists - get the client ID
+                local existing_app
+                existing_app=$(az ad app list --display-name "$app_display_name" --query "[0]" --output json 2>/dev/null)
+                client_id=$(echo "$existing_app" | jq -r '.appId' 2>/dev/null || echo "")
+
+                if [[ -n "$client_id" && "$client_id" != "null" ]]; then
+
+                    # Update existing application configuration
+                    configure_entraid_application "$client_id"
+                    configure_cloudshell_api_permissions "$client_id"
+                    configure_cloudshell_authentication "$client_id"
+                else
+                    log_error "Failed to get client ID from existing CLOUDSHELL application"
+                    return 1
+                fi
+            else
+                # Application doesn't exist - create it
+
+                local app_result
+                app_result=$(az ad app create \
+                    --display-name "$app_display_name" \
+                    --sign-in-audience "AzureADMyOrg" \
+                    --output json 2>/dev/null)
+
+                if [[ $? -eq 0 && -n "$app_result" ]]; then
+                    client_id=$(echo "$app_result" | jq -r '.appId' 2>/dev/null || echo "")
+                    local app_object_id
+                    app_object_id=$(echo "$app_result" | jq -r '.id' 2>/dev/null || echo "")
+
+                    if [[ -n "$client_id" && "$client_id" != "null" ]]; then
+                        log_success "CLOUDSHELL application created successfully"
+
+                        # Create service principal
+                        local sp_result
+                        sp_result=$(az ad sp create --id "$client_id" --output json 2>/dev/null)
+
+                        if [[ $? -eq 0 ]]; then
+                            local sp_object_id
+                            sp_object_id=$(echo "$sp_result" | jq -r '.id' 2>/dev/null || echo "")
+                            log_success "Service principal created successfully"
+                        else
+                            log_warning "Failed to create service principal, but application was created"
+                        fi
+
+                        # Configure application settings for the new application
+                        configure_entraid_application "$client_id"
+
+                        # Configure API permissions for the new application
+                        configure_cloudshell_api_permissions "$client_id"
+
+                        # Enable public client flows
+                        configure_cloudshell_authentication "$client_id"
+                    else
+                        log_error "Failed to get client ID from newly created CLOUDSHELL application"
+                        return 1
+                    fi
+                else
+                    log_error "Failed to create CLOUDSHELL application"
+                    return 1
+                fi
+            fi
+
+            # Set the GitHub secrets with the obtained values
+            if [[ -n "$tenant_id" && -n "$client_id" ]]; then
+                set_github_secret "CLOUDSHELL_DIRECTORY_TENANT_ID" "$tenant_id" "$INFRASTRUCTURE_REPO_NAME"
+                set_github_secret "CLOUDSHELL_DIRECTORY_CLIENT_ID" "$client_id" "$INFRASTRUCTURE_REPO_NAME"
+                RUN_INFRASTRUCTURE="true"
+            else
+                log_error "Missing required values for CloudShell secrets"
+                return 1
+            fi
+        else
+            log_error "Failed to get Azure tenant information"
+            return 1
+        fi
+    else
+        log_warning "Azure CLI not available or not authenticated"
+
+        # Fallback to manual input using existing logic
+        manage_conditional_secret "CLOUDSHELL_DIRECTORY_TENANT_ID" "$INFRASTRUCTURE_REPO_NAME" \
+            "Change the CloudShell Directory Tenant ID" "Enter CloudShell Directory Tenant ID"
+
+        manage_conditional_secret "CLOUDSHELL_DIRECTORY_CLIENT_ID" "$INFRASTRUCTURE_REPO_NAME" \
+            "Change the CloudShell Directory Client ID" "Enter CloudShell Directory Client ID"
+    fi
 }
 
 update_management_public_ip() {
@@ -1833,11 +2516,8 @@ update_production_environment_variables() {
 
     # Set new value if provided (sync to both repos)
     if [[ -n "$new_value" ]]; then
-        retry_command "$MAX_RETRIES" "$RETRY_INTERVAL" "set PRODUCTION_ENVIRONMENT in infrastructure repo" \
-            gh variable set "PRODUCTION_ENVIRONMENT" --body "$new_value" --repo "${GITHUB_ORG}/$INFRASTRUCTURE_REPO_NAME"
-
-        retry_command "$MAX_RETRIES" "$RETRY_INTERVAL" "set PRODUCTION_ENVIRONMENT in manifests-applications repo" \
-            gh variable set "PRODUCTION_ENVIRONMENT" --body "$new_value" --repo "${GITHUB_ORG}/$MANIFESTS_APPLICATIONS_REPO_NAME"
+        set_github_variable_multiple_repos "PRODUCTION_ENVIRONMENT" "$new_value" \
+            "$INFRASTRUCTURE_REPO_NAME" "$MANIFESTS_APPLICATIONS_REPO_NAME"
 
         log_success "Successfully set PRODUCTION_ENVIRONMENT to $new_value"
         RUN_INFRASTRUCTURE="true"
@@ -1935,7 +2615,6 @@ EOF
 
 # Full initialization workflow
 initialize() {
-    echo "Starting infrastructure initialization..."
 
     update_github_auth_login
     # update_github_forks  # Uncommented when needed
@@ -1960,7 +2639,6 @@ initialize() {
     # update_manifests_private_keys  # Uncommented when needed
     update_manifests_applications_variables
 
-    echo "Infrastructure initialization complete."
 }
 
 # Environment destruction
@@ -1972,12 +2650,10 @@ destroy() {
 
 # Azure resource creation only
 create_azure_resources() {
-    log_info "Creating Azure resources..."
 
     update_azure_auth_and_subscription
     update_azure_tfstate_resources
 
-    log_success "Successfully completed Azure resource creation."
 }
 
 # Sync GitHub forks
@@ -2119,10 +2795,9 @@ main() {
     # Handle infrastructure workflow trigger
     if [[ "$RUN_INFRASTRUCTURE" == "true" ]]; then
         if prompt_confirmation "Do you wish to run the infrastructure workflow" "Y"; then
-            log_info "Triggering infrastructure workflow..."
 
             if ! retry_command "$MAX_RETRIES" "$RETRY_INTERVAL" "trigger infrastructure workflow" \
-                gh workflow run -R "$GITHUB_ORG/$INFRASTRUCTURE_REPO_NAME" "infrastructure"; then
+                gh workflow run -R "$GITHUB_ORG/$INFRASTRUCTURE_REPO_NAME" "infrastructure" &>/dev/null; then
                 log_error "Failed to trigger infrastructure workflow."
                 exit 1
             fi
