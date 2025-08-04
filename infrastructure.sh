@@ -1518,6 +1518,157 @@ update_azure_credentials() {
   fi
 }
 
+# Upload logo to Entra ID application
+# Uploads the platform-FortiCloud logo as the application's branding logo
+# Converts SVG to PNG format since Azure EntraID only supports JPG, PNG, GIF
+#
+# Arguments:
+#   $1 - Application object ID (not client ID)
+#
+# Globals:
+#   Uses: SCRIPT_DIR for logo file location
+#
+# Returns:
+#   0 on success, 1 on failure
+upload_entraid_application_logo() {
+    local app_object_id="$1"
+    local logo_svg="${SCRIPT_DIR}/platform-FortiCloud.svg"
+    local logo_png="${SCRIPT_DIR}/platform-FortiCloud.png"
+    local temp_logo_png="${SCRIPT_DIR}/temp-logo.png"
+
+    if ! validate_non_empty "$app_object_id" "application object ID"; then
+        log_error "Application object ID is required for logo upload"
+        return 1
+    fi
+
+    # Check if SVG logo file exists
+    if [[ ! -f "$logo_svg" ]]; then
+        log_warning "Logo file not found: $logo_svg"
+        return 1
+    fi
+
+    log_info "Preparing application logo for upload..."
+
+    # Azure EntraID only supports JPG, PNG, GIF formats (not SVG)
+    # Convert SVG to PNG if needed
+    local logo_to_upload="$logo_png"
+    
+    if [[ ! -f "$logo_png" ]]; then
+        log_info "Converting SVG to PNG format (Azure EntraID requirement)..."
+        
+        # Try different conversion tools
+        local conversion_success=false
+        
+        if command -v magick >/dev/null 2>&1; then
+            # Use ImageMagick v7+ (magick command)
+            if magick "$logo_svg" -resize 240x240 -background transparent "$temp_logo_png" 2>/dev/null; then
+                mv "$temp_logo_png" "$logo_png"
+                conversion_success=true
+                log_success "Converted SVG to PNG using ImageMagick (magick)"
+            fi
+        elif command -v convert >/dev/null 2>&1; then
+            # Use ImageMagick v6 (convert command)
+            if convert "$logo_svg" -resize 240x240 -background transparent "$temp_logo_png" 2>/dev/null; then
+                mv "$temp_logo_png" "$logo_png"
+                conversion_success=true
+                log_success "Converted SVG to PNG using ImageMagick (convert)"
+            fi
+        elif command -v rsvg-convert >/dev/null 2>&1; then
+            # Use librsvg
+            if rsvg-convert -w 240 -h 240 -f png -o "$temp_logo_png" "$logo_svg" 2>/dev/null; then
+                mv "$temp_logo_png" "$logo_png"
+                conversion_success=true
+                log_success "Converted SVG to PNG using rsvg-convert"
+            fi
+        elif command -v inkscape >/dev/null 2>&1; then
+            # Use Inkscape
+            if inkscape --export-type=png --export-width=240 --export-height=240 --export-filename="$temp_logo_png" "$logo_svg" 2>/dev/null; then
+                mv "$temp_logo_png" "$logo_png"
+                conversion_success=true
+                log_success "Converted SVG to PNG using Inkscape"
+            fi
+        fi
+
+        if [[ "$conversion_success" != true ]]; then
+            log_warning "Could not convert SVG to PNG (no conversion tools available)"
+            log_info "Install ImageMagick, librsvg, or Inkscape: brew install imagemagick"
+            return 1
+        fi
+    else
+        log_info "Using existing PNG logo: $(basename "$logo_png")"
+    fi
+
+    # Get file size and validate
+    if [[ ! -f "$logo_to_upload" ]]; then
+        log_error "Logo file not found after conversion: $logo_to_upload"
+        return 1
+    fi
+
+    local file_size
+    file_size=$(stat -f%z "$logo_to_upload" 2>/dev/null || stat -c%s "$logo_to_upload" 2>/dev/null)
+    
+    if [[ $file_size -gt 102400 ]]; then
+        log_warning "Logo file size ($file_size bytes) exceeds Azure limit of 100KB"
+        return 1
+    fi
+
+    log_info "Uploading application logo (${file_size} bytes)..."
+
+    # Get access token for Microsoft Graph API
+    local access_token
+    if ! access_token=$(az account get-access-token --resource https://graph.microsoft.com --query accessToken -o tsv 2>/dev/null); then
+        log_error "Failed to get Microsoft Graph access token"
+        return 1
+    fi
+
+    # Upload logo using curl (more reliable than az rest for binary uploads)
+    local upload_response
+    local curl_error
+    upload_response=$(curl -s -X PUT \
+        -H "Authorization: Bearer $access_token" \
+        -H "Content-Type: image/png" \
+        --data-binary "@${logo_to_upload}" \
+        -w "%{http_code}" \
+        -o /dev/null \
+        "https://graph.microsoft.com/v1.0/applications/${app_object_id}/logo" 2> >(curl_error=$(cat); typeset -p curl_error >/dev/null) || echo "000")
+
+    # Check response code
+    case "$upload_response" in
+        "204")
+            log_success "Successfully uploaded application logo"
+            return 0
+            ;;
+        "401")
+            log_warning "Unauthorized - check Azure permissions for Application.ReadWrite.All"
+            return 1
+            ;;
+        "403")
+            log_warning "Forbidden - insufficient permissions to modify application"
+            return 1
+            ;;
+        "404")
+            log_warning "Application not found - check application object ID"
+            return 1
+            ;;
+        "413")
+            log_warning "File too large - Azure limit is 100KB"
+            return 1
+            ;;
+        "415")
+            log_warning "Unsupported media type - use JPG, PNG, or GIF format"
+            return 1
+            ;;
+        "000"|"")
+            log_warning "Network error or timeout during logo upload"
+            return 1
+            ;;
+        *)
+            log_warning "Logo upload failed with HTTP status: $upload_response"
+            return 1
+            ;;
+    esac
+}
+
 # Configure Entra ID application settings (Enhanced Version)
 # Uses Microsoft Graph API directly for better reliability
 #
@@ -1538,6 +1689,12 @@ configure_entraid_application() {
     local redirect_url="${home_page_url}/redirect"
     local timeout_duration=30
 
+    log_info "Configuring Entra ID application branding and settings..."
+    log_info "  Home page URL: ${home_page_url}"
+    log_info "  Terms of service URL: ${terms_url}"
+    log_info "  Privacy statement URL: ${privacy_url}"
+    log_info "  Redirect URL: ${redirect_url}"
+
     if ! validate_non_empty "$app_id" "application ID"; then
         log_error "Application ID is required for Entra ID configuration"
         return 1
@@ -1548,6 +1705,9 @@ configure_entraid_application() {
         return 1
     fi
     local app_object_id="$APP_OBJECT_ID"
+
+    # Upload application logo
+    upload_entraid_application_logo "$app_object_id"
 
     # Method 1: Update web settings via Microsoft Graph API
     local web_payload=""
@@ -1577,7 +1737,6 @@ EOF
     info_payload=$(cat <<EOF
 {
     "info": {
-        "logoUrl": "${home_page_url}/logo.png",
         "termsOfServiceUrl": "${terms_url}",
         "privacyStatementUrl": "${privacy_url}",
         "marketingUrl": "${home_page_url}",
