@@ -1607,7 +1607,6 @@ EOF
         return 1
     fi
 
-    return 0
 }
 
 # Verify Entra ID application settings
