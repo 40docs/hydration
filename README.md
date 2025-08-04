@@ -128,6 +128,7 @@ This single command will:
 - Manages Terraform state in Azure Storage Account with retry logic
 - Stores all Azure credentials as encrypted GitHub secrets with validation
 - Enhanced resource management with proper error handling
+- **Azure EntraID Application Branding**: Automatically uploads logos and configures application settings
 
 ### Secret Management Pattern
 ```bash
@@ -202,6 +203,42 @@ hydration/
 ```
 
 ## 🔧 Configuration
+
+### Azure EntraID Application Logo Upload
+
+The system automatically configures Azure EntraID application branding, including logo upload functionality:
+
+#### Supported Features:
+- **Automatic SVG to PNG conversion** (Azure requirement)
+- **Multiple conversion tools support**: ImageMagick, librsvg, Inkscape
+- **Optimal sizing**: Automatically resizes to 240x240 pixels (Azure recommended)
+- **Format validation**: Ensures JPG, PNG, or GIF format (Azure requirement)
+- **Size validation**: Enforces 100KB size limit (Azure requirement)
+- **Enhanced error handling**: Provides specific error messages for different failure scenarios
+
+#### File Requirements:
+- **Logo file**: `platform-FortiCloud.svg` (source file)
+- **Converted file**: `platform-FortiCloud.png` (automatically generated)
+- **Maximum size**: 100KB
+- **Supported formats**: JPG, PNG, GIF (SVG will be converted to PNG)
+- **Recommended dimensions**: 240x240 pixels
+
+#### Installation Requirements:
+For automatic SVG to PNG conversion, install one of these tools:
+```bash
+# macOS (recommended)
+brew install imagemagick
+
+# Alternative options
+brew install librsvg    # For rsvg-convert
+brew install inkscape   # For inkscape
+```
+
+#### Troubleshooting Logo Upload:
+- **SVG not supported**: Logo is automatically converted to PNG format
+- **File too large**: Reduce image complexity or resize to smaller dimensions
+- **Permission errors**: Ensure Azure account has Application.ReadWrite.All permissions
+- **Network timeouts**: Logo upload includes retry logic with timeout handling
 
 ### Recent Script Optimizations (Latest Release)
 
