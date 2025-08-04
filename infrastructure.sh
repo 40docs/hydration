@@ -786,7 +786,7 @@ set_github_variable_multiple_repos() {
 
     for repo_name in "${repos[@]}"; do
         if retry_command "$MAX_RETRIES" "$RETRY_INTERVAL" "set $variable_name in $repo_name repo" \
-            gh variable set "$variable_name" --body "$variable_value" --repo "${GITHUB_ORG}/$repo_name"; then
+            gh variable set "$variable_name" -b "$variable_value" --repo "${GITHUB_ORG}/$repo_name"; then
             ((success_count++))
         else
             log_error "Failed to set $variable_name in $repo_name after $MAX_RETRIES attempts"
