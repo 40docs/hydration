@@ -40,6 +40,7 @@ All system behavior is controlled by `config.json`:
 - **🔄 Retry Logic**: Standardized retry patterns with exponential backoff
 - **🌐 Cross-Platform Compatibility**: Works with macOS system bash (3.2.57) and modern versions
 - **📊 Enhanced Logging**: Visual symbols for different message types (❌ ⚠️ ✅ •)
+- **🎯 DRY Principle Implementation**: Code consolidation functions eliminate duplication and improve maintainability
 
 ### Enhanced Automation Capabilities
 - **8 Specialized Validation Functions**: Email, GitHub org, Azure resources, DNS zones
@@ -164,6 +165,8 @@ ALLREPOS=()          # All managed repositories
 - **Comprehensive Documentation**: All functions documented with parameters and return values
 - **Retry Logic**: Standardized retry patterns with exponential backoff
 - **Defensive Programming**: Input validation and edge case handling throughout
+- **Code Consolidation**: DRY principle implementation with reusable functions for common operations
+- **Maintainability**: Reduced code duplication through consolidation functions
 
 ## 🏭 Infrastructure Components
 
@@ -199,6 +202,28 @@ hydration/
 ```
 
 ## 🔧 Configuration
+
+### Recent Script Optimizations (Latest Release)
+
+The `infrastructure.sh` script has been significantly enhanced with comprehensive optimizations:
+
+#### ✅ **Code Quality Improvements**
+- **Unused Function Removal**: Eliminated 3 unused functions to reduce script size and complexity
+- **DRY Principle Implementation**: Added 3 new consolidation functions to eliminate code duplication:
+  - `set_github_variable_multiple_repos()` - Consolidates GitHub variable setting across repositories
+  - `get_azure_app_object_id()` - Standardizes Azure AD app object ID retrieval with timeout handling
+  - `set_github_secret_multiple_repos()` - Centralizes GitHub secret management operations
+
+#### ✅ **Maintainability Enhancements**
+- **Single Point of Modification**: Changes to GitHub/Azure operations now require updates in only one location
+- **Standardized Error Handling**: Consistent retry logic and error messages across all operations
+- **Code Reduction**: Eliminated ~16 lines of duplicated code while maintaining full functionality
+- **Reusable Functions**: New consolidation functions can be leveraged for future similar operations
+
+#### ✅ **Quality Assurance**
+- **Syntax Validation**: Full script syntax validation with bash compatibility checks
+- **No Breaking Changes**: All existing functionality preserved during optimization
+- **Enhanced Testing**: Easier to test and debug with centralized function patterns
 
 ### Environment Variables
 The script automatically manages environment variables and GitHub secrets:
