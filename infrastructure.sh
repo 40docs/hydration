@@ -33,6 +33,9 @@ readonly EXIT_CONFIG_ERROR=2
 readonly EXIT_AUTH_ERROR=3
 readonly EXIT_NETWORK_ERROR=4
 
+# ANSI color code constants for consistent prompt styling
+readonly PROMPT_PREFIX=$'\033[34m?\033[0m'  # Blue question mark with reset
+
 # Initialize global variables
 RUN_INFRASTRUCTURE="false"
 CURRENT_DIR=""
@@ -351,10 +354,10 @@ prompt_confirmation() {
 
     while (( attempt <= max_attempts )); do
         if [[ "$default" == "Y" ]]; then
-            read -rp $'\033[34m?\033[0m'" $prompt (Y/n): " response
+            read -rp "${PROMPT_PREFIX} $prompt (Y/n): " response
             response="${response:-Y}"
         else
-            read -rp $'\033[34m?\033[0m'" $prompt (N/y): " response
+            read -rp "${PROMPT_PREFIX} $prompt (N/y): " response
             response="${response:-N}"
         fi
 
@@ -382,7 +385,7 @@ prompt_secret() {
     local attempt=1
 
     while (( attempt <= max_attempts )); do
-        read -srp $'\033[34m?\033[0m'" $prompt: " value
+        read -srp "${PROMPT_PREFIX} $prompt: " value
         echo  # New line after hidden input
 
         if (( ${#value} < min_length )); then
@@ -426,10 +429,10 @@ prompt_text() {
 
     while (( attempt <= max_attempts )); do
         if [[ -n "$default" ]]; then
-            read -rp $'\033[34m?\033[0m'" $prompt [$default]: " value
+            read -rp "${PROMPT_PREFIX} $prompt [$default]: " value
             value="${value:-$default}"
         else
-            read -rp $'\033[34m?\033[0m'" $prompt: " value
+            read -rp "${PROMPT_PREFIX} $prompt: " value
         fi
 
         if [[ -z "$value" ]]; then
@@ -475,7 +478,7 @@ prompt_choice() {
     done
 
     while true; do
-        read -rp $'\033[34m?\033[0m'" Choose an option (1-${#options[@]}): " choice
+        read -rp "${PROMPT_PREFIX} Choose an option (1-${#options[@]}): " choice
         if [[ "$choice" =~ ^[0-9]+$ ]] && (( choice >= 1 && choice <= ${#options[@]} )); then
             return $((choice - 1))
         else
