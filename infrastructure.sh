@@ -205,9 +205,10 @@ initialize_environment() {
     readonly DOCS_FQDN="docs.${DNS_ZONE}"
     readonly OLLAMA_FQDN="ollama.${DNS_ZONE}"
     readonly ARTIFACTS_FQDN="artifacts.${DNS_ZONE}"
+    readonly CLOUDSHELL_FQDN="cloudshell.${DNS_ZONE}"
 
     # Generate Azure storage account name (max 24 chars, alphanumeric only)
-    AZURE_STORAGE_ACCOUNT_NAME=$(echo "rmmuap${PROJECT_NAME}account" | tr '[:upper:]' '[:lower:]' | tr -cd 'a-z' | cut -c 1-24)
+    AZURE_STORAGE_ACCOUNT_NAME=$(echo "infra${PROJECT_NAME}account" | tr '[:upper:]' '[:lower:]' | tr -cd 'a-z' | cut -c 1-24)
     readonly AZURE_STORAGE_ACCOUNT_NAME
 
     # Handle MkDocs repo name format
@@ -338,10 +339,6 @@ log_warning() {
 
 log_success() {
     echo "✅ $*"
-}
-
-log_info() {
-    echo "• $*"
 }
 
 # Enhanced prompt functions with validation
@@ -1547,18 +1544,15 @@ upload_entraid_application_logo() {
         return 1
     fi
 
-    log_info "Preparing application logo for upload..."
-
     # Azure EntraID only supports JPG, PNG, GIF formats (not SVG)
     # Convert SVG to PNG if needed
     local logo_to_upload="$logo_png"
-    
+
     if [[ ! -f "$logo_png" ]]; then
-        log_info "Converting SVG to PNG format (Azure EntraID requirement)..."
-        
+
         # Try different conversion tools
         local conversion_success=false
-        
+
         if command -v magick >/dev/null 2>&1; then
             # Use ImageMagick v7+ (magick command)
             if magick "$logo_svg" -resize 240x240 -background transparent "$temp_logo_png" 2>/dev/null; then
@@ -1591,11 +1585,8 @@ upload_entraid_application_logo() {
 
         if [[ "$conversion_success" != true ]]; then
             log_warning "Could not convert SVG to PNG (no conversion tools available)"
-            log_info "Install ImageMagick, librsvg, or Inkscape: brew install imagemagick"
             return 1
         fi
-    else
-        log_info "Using existing PNG logo: $(basename "$logo_png")"
     fi
 
     # Get file size and validate
@@ -1606,13 +1597,11 @@ upload_entraid_application_logo() {
 
     local file_size
     file_size=$(stat -f%z "$logo_to_upload" 2>/dev/null || stat -c%s "$logo_to_upload" 2>/dev/null)
-    
+
     if [[ $file_size -gt 102400 ]]; then
         log_warning "Logo file size ($file_size bytes) exceeds Azure limit of 100KB"
         return 1
     fi
-
-    log_info "Uploading application logo (${file_size} bytes)..."
 
     # Get access token for Microsoft Graph API
     local access_token
@@ -1688,12 +1677,6 @@ configure_entraid_application() {
     local privacy_url="https://${cloudshell_fqdn}/privacystatement"
     local redirect_url="${home_page_url}/redirect"
     local timeout_duration=30
-
-    log_info "Configuring Entra ID application branding and settings..."
-    log_info "  Home page URL: ${home_page_url}"
-    log_info "  Terms of service URL: ${terms_url}"
-    log_info "  Privacy statement URL: ${privacy_url}"
-    log_info "  Redirect URL: ${redirect_url}"
 
     if ! validate_non_empty "$app_id" "application ID"; then
         log_error "Application ID is required for Entra ID configuration"
@@ -2472,8 +2455,6 @@ grant_cloudshell_admin_consent() {
 
         if [[ -n "$tenant_id" ]]; then
             local admin_consent_url="https://login.microsoftonline.com/${tenant_id}/adminconsent?client_id=${client_id}"
-            log_info "Direct admin consent URL (open in browser):"
-            log_info "$admin_consent_url"
         fi
 
         return 1
@@ -2698,6 +2679,7 @@ update_infrastructure_boolean_variables() {
         "APPLICATION_ARTIFACTS"
         "APPLICATION_EXTRACTOR"
         "GPU_NODE_POOL"
+        "CLOUDSHELL"
     )
 
     manage_multiple_boolean_variables "$INFRASTRUCTURE_REPO_NAME" "${variables[@]}"
@@ -2714,7 +2696,6 @@ update_infrastructure_variables() {
         "DOCS_BUILDER_REPO_NAME:${DOCS_BUILDER_REPO_NAME}"
         "MANIFESTS_APPLICATIONS_REPO_NAME:${MANIFESTS_APPLICATIONS_REPO_NAME}"
         "MANIFESTS_INFRASTRUCTURE_REPO_NAME:${MANIFESTS_INFRASTRUCTURE_REPO_NAME}"
-        "CLOUDSHELL:${CLOUDSHELL:-false}"
     )
     set_multiple_variables "$INFRASTRUCTURE_REPO_NAME" "${variables[@]}"
 }
@@ -2784,6 +2765,9 @@ initialize() {
     update_azure_secrets
     update_cloudshell_secrets
     update_pat
+    update_lw_agent_token
+    update_hub_nva_credentials
+    update_htpasswd
     update_content_repos_variables
     # update_deploy_keys  # Uncommented when needed
     update_docs_builder_variables
@@ -2791,9 +2775,6 @@ initialize() {
     # copy_dispatch_workflow_to_content_repos  # Uncommented when needed
     update_infrastructure_boolean_variables
     update_production_environment_variables
-    update_lw_agent_token
-    update_hub_nva_credentials
-    update_htpasswd
     update_infrastructure_variables
     # update_manifests_private_keys  # Uncommented when needed
     update_manifests_applications_variables
