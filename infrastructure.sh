@@ -1663,13 +1663,14 @@ upload_entraid_application_logo() {
 
     # Upload logo using curl (more reliable than az rest for binary uploads)
     local upload_response
+    local curl_error
     upload_response=$(curl -s -X PUT \
         -H "Authorization: Bearer $access_token" \
         -H "Content-Type: image/png" \
         --data-binary "@${logo_to_upload}" \
         -w "%{http_code}" \
         -o /dev/null \
-        "https://graph.microsoft.com/v1.0/applications/${app_object_id}/logo" 2>/dev/null || echo "000")
+        "https://graph.microsoft.com/v1.0/applications/${app_object_id}/logo" 2> >(curl_error=$(cat); typeset -p curl_error >/dev/null) || echo "000")
 
     # Check response code
     case "$upload_response" in
