@@ -340,10 +340,6 @@ log_success() {
     echo "✅ $*"
 }
 
-log_info() {
-    echo "• $*"
-}
-
 # Enhanced prompt functions with validation
 prompt_confirmation() {
     local prompt="$1"
@@ -1547,14 +1543,11 @@ upload_entraid_application_logo() {
         return 1
     fi
 
-    log_info "Preparing application logo for upload..."
-
     # Azure EntraID only supports JPG, PNG, GIF formats (not SVG)
     # Convert SVG to PNG if needed
     local logo_to_upload="$logo_png"
     
     if [[ ! -f "$logo_png" ]]; then
-        log_info "Converting SVG to PNG format (Azure EntraID requirement)..."
         
         # Try different conversion tools
         local conversion_success=false
@@ -1591,11 +1584,8 @@ upload_entraid_application_logo() {
 
         if [[ "$conversion_success" != true ]]; then
             log_warning "Could not convert SVG to PNG (no conversion tools available)"
-            log_info "Install ImageMagick, librsvg, or Inkscape: brew install imagemagick"
             return 1
         fi
-    else
-        log_info "Using existing PNG logo: $(basename "$logo_png")"
     fi
 
     # Get file size and validate
@@ -1611,8 +1601,6 @@ upload_entraid_application_logo() {
         log_warning "Logo file size ($file_size bytes) exceeds Azure limit of 100KB"
         return 1
     fi
-
-    log_info "Uploading application logo (${file_size} bytes)..."
 
     # Get access token for Microsoft Graph API
     local access_token
@@ -1688,12 +1676,6 @@ configure_entraid_application() {
     local privacy_url="https://${cloudshell_fqdn}/privacystatement"
     local redirect_url="${home_page_url}/redirect"
     local timeout_duration=30
-
-    log_info "Configuring Entra ID application branding and settings..."
-    log_info "  Home page URL: ${home_page_url}"
-    log_info "  Terms of service URL: ${terms_url}"
-    log_info "  Privacy statement URL: ${privacy_url}"
-    log_info "  Redirect URL: ${redirect_url}"
 
     if ! validate_non_empty "$app_id" "application ID"; then
         log_error "Application ID is required for Entra ID configuration"
@@ -2472,8 +2454,6 @@ grant_cloudshell_admin_consent() {
 
         if [[ -n "$tenant_id" ]]; then
             local admin_consent_url="https://login.microsoftonline.com/${tenant_id}/adminconsent?client_id=${client_id}"
-            log_info "Direct admin consent URL (open in browser):"
-            log_info "$admin_consent_url"
         fi
 
         return 1
