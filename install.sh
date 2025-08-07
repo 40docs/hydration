@@ -1,3 +1,27 @@
+# Prompt for CLOUDSHELL variable, show value, allow change, and set RUN_INFRASTRUCTURE if changed
+prompt_and_update_cloudshell_variable() {
+    local current_value new_value=""
+    current_value=$(get_github_variable "CLOUDSHELL" "$INFRASTRUCTURE_REPO_NAME")
+    if [[ -z "$current_value" ]]; then
+        prompt_text "Set initial CLOUDSHELL value ('true' or 'false')" "new_value" "false"
+    else
+        echo "Current value of CLOUDSHELL: $current_value"
+        local opposite_value=""
+        if [[ "$current_value" == "true" ]]; then
+            opposite_value="false"
+        else
+            opposite_value="true"
+        fi
+        if prompt_confirmation "Change current value of 'CLOUDSHELL=$current_value' to $opposite_value?" "N"; then
+            new_value="$opposite_value"
+        fi
+    fi
+    if [[ -n "$new_value" && "$new_value" != "$current_value" ]]; then
+        set_github_variable "CLOUDSHELL" "$new_value" "$INFRASTRUCTURE_REPO_NAME"
+        log_success "Set CLOUDSHELL to $new_value"
+        RUN_INFRASTRUCTURE="true"
+    fi
+}
 #!/usr/bin/env bash
 #
 # Infrastructure Hydration Control Script
@@ -2174,9 +2198,51 @@ copy_docs_builder_workflow_to_docs_builder_repo() {
     return 0
 }
 
-update_lw_agent_token() {
-    manage_conditional_secret "LW_AGENT_TOKEN" "$INFRASTRUCTURE_REPO_NAME" \
-        "Change the FortiCNAPP Agent token" "Enter value for Laceworks Agent token"
+
+# Refactored: Prompt for CLOUDSHELL, FortiCNAPP secrets, and Lacework agent token
+cloudshell_and_lacework_prompt() {
+    # 1. Prompt for CLOUDSHELL deployment
+    if prompt_confirmation "Do you want to deploy CLOUDSHELL?" "N"; then
+        set_github_variable "CLOUDSHELL" "true" "$INFRASTRUCTURE_REPO_NAME"
+
+        # 2. Check if all FORTICNAPP secrets exist
+        local all_exist=true
+        for secret in FORTICNAPP_ACCOUNT FORTICNAPP_SUBACCOUNT FORTICNAPP_API_KEY FORTICNAPP_API_SECRET; do
+            if ! gh secret list --repo "${GITHUB_ORG}/$INFRASTRUCTURE_REPO_NAME" --json name | jq -r '.[].name' | grep -q "^$secret$"; then
+                all_exist=false
+                break
+            fi
+        done
+
+        local update_forticnapp=false
+        if [[ "$all_exist" == true ]]; then
+            if prompt_confirmation "All FORTICNAPP secrets already exist. Would you like to change the FORTICNAPP token values?" "N"; then
+                update_forticnapp=true
+            fi
+        else
+            update_forticnapp=true
+        fi
+
+        if [[ "$update_forticnapp" == true ]]; then
+            local forticnapp_account forticnapp_subaccount forticnapp_api_key forticnapp_api_secret
+            prompt_text "Enter FORTICNAPP Account" "forticnapp_account"
+            prompt_text "Enter FORTICNAPP SUB Account" "forticnapp_subaccount"
+            prompt_secret "Enter FORTICNAPP API Key" "forticnapp_api_key" 8
+            prompt_secret "Enter FORTICNAPP API Secret" "forticnapp_api_secret" 8
+
+            set_github_secret "FORTICNAPP_ACCOUNT" "$forticnapp_account" "$INFRASTRUCTURE_REPO_NAME"
+            set_github_secret "FORTICNAPP_SUBACCOUNT" "$forticnapp_subaccount" "$INFRASTRUCTURE_REPO_NAME"
+            set_github_secret "FORTICNAPP_API_KEY" "$forticnapp_api_key" "$INFRASTRUCTURE_REPO_NAME"
+            set_github_secret "FORTICNAPP_API_SECRET" "$forticnapp_api_secret" "$INFRASTRUCTURE_REPO_NAME"
+        fi
+
+        # 4. Ask if user wants to update Lacework agent token
+        if prompt_confirmation "Do you want to update the Lacework Agent token?" "N"; then
+            update_lw_agent_token
+        fi
+    else
+        set_github_variable "CLOUDSHELL" "false" "$INFRASTRUCTURE_REPO_NAME"
+    fi
 }
 
 update_hub_nva_credentials() {
@@ -2763,9 +2829,7 @@ initialize() {
     update_azure_tfstate_resources
     update_azure_credentials "$SUBSCRIPTION_ID"
     update_azure_secrets
-    update_cloudshell_secrets
     update_pat
-    update_lw_agent_token
     update_hub_nva_credentials
     update_htpasswd
     update_content_repos_variables
@@ -2778,6 +2842,9 @@ initialize() {
     update_infrastructure_variables
     # update_manifests_private_keys  # Uncommented when needed
     update_manifests_applications_variables
+    prompt_and_update_cloudshell_variable
+    update_cloudshell_secrets
+    cloudshell_and_lacework_prompt
 
 }
 
