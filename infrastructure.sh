@@ -1637,7 +1637,7 @@ upload_entraid_application_logo() {
 
     # Method 3: Try wc as fallback (universal)
     if [[ -z "$file_size" ]]; then
-        file_size=$(wc -c < "$logo_to_upload" 2>/dev/null | tr -d ' ') || file_size=""
+        file_size=$(wc -c < "$logo_to_upload" 2>/dev/null | xargs) || file_size=""
     fi
 
     # Method 4: Try ls as last resort
