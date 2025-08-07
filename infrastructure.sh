@@ -1546,8 +1546,13 @@ upload_entraid_application_logo() {
 
     temp_logo_png="${temp_dir}/temp-logo.png"
 
-    # Set cleanup trap for temporary files
-    trap "rm -rf '$temp_dir'" EXIT
+    # Set cleanup trap for temporary files, preserving any existing EXIT trap
+    __existing_exit_trap=$(trap -p EXIT | sed -E "s/^trap -- '(.*)' EXIT$/\1/")
+    if [[ -n "$__existing_exit_trap" ]]; then
+        trap "$__existing_exit_trap; rm -rf '$temp_dir'" EXIT
+    else
+        trap "rm -rf '$temp_dir'" EXIT
+    fi
 
     if ! validate_non_empty "$app_object_id" "application object ID"; then
         log_error "Application object ID is required for logo upload"
