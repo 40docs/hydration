@@ -48,6 +48,15 @@
         "hashicorp/terraform-mcp-server:latest"
       ]
     },
+    "azure": {
+			"command": "npx",
+			"args": [
+				"-y",
+				"@azure/mcp@latest",
+				"server",
+				"start"
+			]
+		},
     "markitdown": {
       "type": "stdio",
       "command": "uvx",
