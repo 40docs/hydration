@@ -4,17 +4,20 @@
 
 [![Open in GitHub Codespaces](https://github.com/codespaces/badge.svg)](https://codespaces.new/40docs/hydration)
 
-The **40docs Hydration System** is a sophisticated automation framework that orchestrates a multi-repository documentation and infrastructure platform. Built with industry best practices, it manages 8+ interconnected repositories through a single control script, deploying a complete Kubernetes-based documentation platform to Azure with comprehensive CI/CD automation.
+The **40docs Hydration System** is the master orchestration engine that manages the entire 40docs multi-repository documentation and infrastructure platform. This sophisticated automation framework coordinates 25+ interconnected repositories through a single 2,100+ line control script, deploying a complete enterprise-grade Kubernetes-based documentation platform to Azure with comprehensive DevOps automation.
 
 ## 🏗️ Architecture Overview
 
-This hydration control repository acts as the central orchestrator for an entire ecosystem of repositories:
+This hydration control repository acts as the central orchestrator for an entire ecosystem of 25+ repositories:
 
 | Repository Type | Purpose | Repositories |
 |----------------|---------|--------------|
 | **Content** | Documentation and theming | `references`, `theme`, `landing-page` |
 | **Infrastructure** | Azure resources and K8s manifests | `infrastructure`, `manifests-infrastructure`, `manifests-applications` |
 | **Build System** | CI/CD and containerization | `docs-builder`, `mkdocs`, `helm-charts` |
+| **Security Labs** | Hands-on security training | `lab-forticnapp-*`, `container-security-demo` |
+| **DevContainers** | Development environments | `devcontainer-features`, `devcontainer-templates` |
+| **Specialized Tools** | Unique utilities and services | `az-decompile`, `fortiweb-ingress`, `video-*`, `tts-microservices` |
 
 ### Configuration-Driven Design
 
@@ -63,19 +66,19 @@ All system behavior is controlled by `config.json`:
 
 ```bash
 # Initialize the entire platform (default action)
-./infrastructure.sh
+./install.sh
 
 # Or explicitly
-./infrastructure.sh --initialize
+./install.sh --initialize
 ```
 
 This single command will:
 - ✅ Authenticate with GitHub and Azure (with enhanced validation)
 - ✅ Create Azure service principal and storage account (with secure operations)
-- ✅ Generate SSH deploy keys for all repositories (with proper permissions)
+- ✅ Generate SSH deploy keys for all 25+ repositories (with proper permissions)
 - ✅ Configure GitHub secrets and variables across repositories (with input validation)
-- ✅ Set up CI/CD workflows (with error handling)
-- ✅ Deploy infrastructure via Terraform
+- ✅ Set up CI/CD workflows with GitOps deployment (with error handling)
+- ✅ Deploy complete Kubernetes infrastructure via Terraform
 - ✅ Provide detailed feedback through enhanced logging with visual symbols
 
 ## 📋 Available Commands
@@ -86,7 +89,7 @@ This single command will:
 | `--destroy` | Tear down environment and clean up resources |
 | `--create-azure-resources` | Create Azure resources only |
 | `--sync-forks` | Synchronize GitHub repository forks |
-| `--deploy-keys` | Update SSH deploy keys across repositories |
+| `--deploy-keys` | Update SSH deploy keys across all 25+ repositories |
 | `--htpasswd` | Change documentation password |
 | `--management-ip` | Update management IP address |
 | `--hub-passwd` | Change Fortiweb password |
@@ -97,16 +100,16 @@ This single command will:
 
 ```bash
 # Sync all repository forks
-./infrastructure.sh --sync-forks
+./install.sh --sync-forks
 
-# Regenerate SSH deploy keys
-./infrastructure.sh --deploy-keys
+# Regenerate SSH deploy keys across all repositories
+./install.sh --deploy-keys
 
 # Update documentation password
-./infrastructure.sh --htpasswd
+./install.sh --htpasswd
 
 # Destroy the environment
-./infrastructure.sh --destroy
+./install.sh --destroy
 ```
 
 ## 🔐 Security & Authentication
@@ -187,8 +190,9 @@ ALLREPOS=()          # All managed repositories
 
 ```
 hydration/
-├── infrastructure.sh           # Main orchestration script (~2127 lines)
+├── install.sh                 # Main orchestration script (~2,100+ lines)
 ├── config.json                # Central configuration
+├── CLAUDE.md                  # Claude Code AI assistance instructions
 ├── .github/
 │   ├── workflows/
 │   │   └── infrastructure.yml  # Terraform deployment workflow
@@ -242,7 +246,7 @@ brew install inkscape   # For inkscape
 
 ### Recent Script Optimizations (Latest Release)
 
-The `infrastructure.sh` script has been significantly enhanced with comprehensive optimizations:
+The `install.sh` script has been significantly enhanced with comprehensive optimizations:
 
 #### ✅ **Code Quality Improvements**
 - **Unused Function Removal**: Eliminated 3 unused functions to reduce script size and complexity
@@ -348,22 +352,22 @@ gh pr create --title "Your changes" --body "Description"
 ### Fork Synchronization
 ```bash
 # Sync all repository forks with upstream
-./infrastructure.sh --sync-forks
+./install.sh --sync-forks
 ```
 
 ### Key Rotation
 ```bash
-# Regenerate all SSH deploy keys
-./infrastructure.sh --deploy-keys
+# Regenerate all SSH deploy keys across 25+ repositories
+./install.sh --deploy-keys
 ```
 
 ### Environment Management
 ```bash
 # Create only Azure resources
-./infrastructure.sh --create-azure-resources
+./install.sh --create-azure-resources
 
 # Update specific secrets
-./infrastructure.sh --cloudshell-secrets
+./install.sh --cloudshell-secrets
 ```
 
 ## � Troubleshooting
@@ -437,7 +441,7 @@ ERROR: Key already exists on repository
 ERROR: Permission denied (publickey)
 
 # Solutions
-./infrastructure.sh --deploy-keys  # Regenerate all deploy keys
+./install.sh --deploy-keys  # Regenerate all deploy keys across repositories
 
 # Manual key inspection
 ls -la ~/.ssh/id_ed25519-*
@@ -448,7 +452,7 @@ ls -la ~/.ssh/id_ed25519-*
 # Verify repository existence and permissions
 gh repo view YOUR_ORG/REPO_NAME
 # Sync forks if using forked repositories
-./infrastructure.sh --sync-forks
+./install.sh --sync-forks
 ```
 
 #### Enhanced Logging System
