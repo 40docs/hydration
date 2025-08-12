@@ -2696,6 +2696,16 @@ update_cloudshell_secrets() {
     fi
 }
 
+update_mcp_api_keys() {
+    # Manage Brave API Key for MCP integrations
+    manage_conditional_secret "BRAVE_API_KEY" "$INFRASTRUCTURE_REPO_NAME" \
+        "Set/update Brave API Key" "Enter Brave API Key"
+
+    # Manage Perplexity API Key for MCP integrations
+    manage_conditional_secret "PERPLEXITY_API_KEY" "$INFRASTRUCTURE_REPO_NAME" \
+        "Set/update Perplexity API Key" "Enter Perplexity API Key"
+}
+
 update_management_public_ip() {
     manage_boolean_variable "MANAGEMENT_PUBLIC_IP" "$INFRASTRUCTURE_REPO_NAME" "false"
 }
@@ -2805,6 +2815,7 @@ OPTIONS:
   --management-ip           Update management IP address
   --hub-passwd              Change Fortiweb password
   --cloudshell-secrets      Update CloudShell directory secrets
+  --mcp-api-keys            Set/update MCP API keys (Brave and Perplexity)
   --help                    Display this help message
 
 EXAMPLES:
@@ -2831,6 +2842,7 @@ initialize() {
     update_azure_secrets
     update_pat
     update_hub_nva_credentials
+    update_mcp_api_keys
     update_htpasswd
     update_content_repos_variables
     # update_deploy_keys  # Uncommented when needed
@@ -2987,6 +2999,9 @@ main() {
             ;;
         --cloudshell-secrets)
             cloudshell_secrets
+            ;;
+        --mcp-api-keys)
+            update_mcp_api_keys
             ;;
         --help|-h)
             show_help
